@@ -60,7 +60,15 @@ st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 # --- 3. CARGA DE DATOS ---
 @st.cache_data
 def load_allh_data():
-    return pd.read_parquet('allh_dashboard.parquet')
+    try:
+        # Leer las dos mitades optimizadas
+        df1 = pd.read_parquet('allh_part1.parquet')
+        df2 = pd.read_parquet('allh_part2.parquet')
+        # Unirlas en un solo DataFrame
+        return pd.concat([df1, df2], ignore_index=True)
+    except Exception as e:
+        st.error(f"Error cargando las partes del archivo allh: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data
