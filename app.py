@@ -5,7 +5,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter
-import gc
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide")
 
@@ -26,6 +25,7 @@ def check_password():
         st.text_input("🔑 Introduce la contraseña:", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
+        st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
         st.text_input("🔑 Introduce la contraseña:", type="password", on_change=password_entered, key="password")
         st.error("😕 Contraseña incorrecta.")
         return False
@@ -41,12 +41,10 @@ st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 @st.cache_data
 def load_allh_data():
     try:
-        # Cargamos explícitamente las columnas necesarias para no saturar la memoria
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
                        'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i',
                        'Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i', 'Rev_tr']
         
-        # Leer primero el schema para ver qué columnas existen realmente
         import pyarrow.parquet as pq
         schema = pq.read_schema('allh_part1.parquet')
         cols_to_load = [c for c in cols_needed if c in schema.names]
@@ -121,11 +119,19 @@ tab_principal, tab_rt5, tab_gnera, tab_verbund, tab_evo = st.tabs([
 with tab_principal:
     st.subheader("Dispersión de ingresos en Servicios de ajuste por Tecnología")
     
-    # 1. Filtro de MA excluidos SOLO para esta pestaña principal
-    excluded_MAs = ["ENDESA", "IBERDROLA", "EDP", "NATURGY", "HOLALUZ", "ALDROENERGIA Y SOLUCIONES SL"]
-    allh_main = allh[~allh['MA'].isin(excluded_MAs)].copy()
+    # 1. Filtro de UPs activas (como lo tenías originalmente)
+    active_mask = pd.Series(False, index=allh.index)
+    for c in ['Profit_rt', 'Profit_b']:
+        if c in allh.columns:
+            active_mask = active_mask | (allh[c] != 0)
+    active_ups = allh[active_mask]['UP'].unique()
     
-    # 2. Selección de mercados
+    # 2. Exclusión de MAs no deseados
+    excluded_MAs = ["ENDESA", "IBERDROLA", "EDP", "NATURGY", "HOLALUZ", "ALDROENERGIA Y SOLUCIONES SL", "Desconocido"]
+    
+    allh_main = allh[(allh['UP'].isin(active_ups)) & (~allh['MA'].isin(excluded_MAs))].copy()
+    
+    # 3. Selección de mercados
     if aass_sel == 'no_sec': cols_sel = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr']
     elif aass_sel == 'sec': cols_sel = ['Profit_b', 'Profit_se']
     else: cols_sel = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']
@@ -180,7 +186,6 @@ with tab_rt5:
         with col_rt1: ma_rt5 = st.selectbox("MA (RT5):", sorted(allh['MA'].unique()), index=sorted(allh['MA'].unique()).index('GNERA') if 'GNERA' in allh['MA'].unique() else 0)
         with col_rt2: tech_rt5 = st.selectbox("Tech (RT5):", sorted(allh['Tech'].unique()), index=sorted(allh['Tech'].unique()).index('Wind') if 'Wind' in allh['Tech'].unique() else 0)
         
-        # Tu lógica original
         mask_rt5 = (allh['Profit_rt']!=0)|(allh['Profit_b']!=0)|(allh['Profit_t']!=0)|(allh['Profit_rr']!=0)
         rrtt_up = allh[allh['MA'] == ma_rt5][mask_rt5]
         rrtt_up = rrtt_up[rrtt_up['Tech'] == tech_rt5]
@@ -191,39 +196,43 @@ with tab_rt5:
         if up.empty:
             st.warning("No hay datos suficientes para esta combinación.")
         else:
-            up_sum = up.groupby(['Tech','MA','Day','hour']).sum(numeric_only=True).reset_index()
-            up_sum['Month'] = up_sum['Day'].dt.to_period('M')
-            up_sum['Year_Month'] = up_sum['Month']
-            up_sum['Profit_AASS'] = up_sum[['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b']].sum(axis=1)
-            up_sum['Energy_AASS'] = up_sum[['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se']].sum(axis=1)
-
-            # TABLA ESTILO MATPLOTLIB ORIGINAL
-            up_m = up_sum.groupby(['Year_Month'])[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum().reset_index()
-            up_m['% p48/PBF'] =  up_m['Energy_p48']/up_m['PBF'].replace(0, np.nan)
-            up_m['% RT1/PBF'] =  -up_m['Energy_RT1']/up_m['PBF'].replace(0, np.nan)
-            up_m['Intras €/MWh'] =  up_m['Profit_i']/up_m['Energy_p48'].replace(0, np.nan)
-            up_m['AASS €/MWh'] =  up_m['Profit_AASS']/up_m['Energy_p48'].replace(0, np.nan)
-
-            up_m = up_m.loc[:, ['Year_Month', '% p48/PBF', '% RT1/PBF', 'Profit_tr',  'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']]
-            up_m_def = up_m.set_index('Year_Month')
-            up_m_def.columns = ['% p48/PBF', '% RT1/PBF', 'Real Time\n€', 'AASS\n€', 'Intras\n€', 'Intras\n€/MWh', 'AASS\n€/MWh']
+            # Solución al error datetime64: Extraer Year_Month ANTES de sumar y agrupar solo numéricos
+            up['Year_Month'] = up['Day'].dt.to_period('M')
+            
+            # Tabla de métricas
+            cols_to_sum_m = ['PBF','Energy_p48','Energy_RT1','Profit_tr','Profit_i', 'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se']
+            up_m = up.groupby(['Year_Month'])[cols_to_sum_m].sum(numeric_only=True).reset_index()
+            
+            # Suma segura de Profits
+            profit_cols_rt5 = [c for c in ['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b'] if c in up.columns]
+            up_m['Profit_AASS'] = up.groupby(['Year_Month'])[profit_cols_rt5].sum(numeric_only=True).sum(axis=1).values
+            
+            up_m['% p48/PBF'] = (up_m['Energy_p48']/up_m['PBF'].replace(0, np.nan)) * 100
+            up_m['% RT1/PBF'] = (-up_m['Energy_RT1']/up_m['PBF'].replace(0, np.nan)) * 100
+            up_m['Intras €/MWh'] = up_m['Profit_i']/up_m['Energy_p48'].replace(0, np.nan)
+            up_m['AASS €/MWh'] = up_m['Profit_AASS']/up_m['Energy_p48'].replace(0, np.nan)
+            
+            df_table_rt5 = up_m[['Year_Month', '% p48/PBF', '% RT1/PBF', 'Profit_tr', 'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']].copy()
+            df_table_rt5.columns = ['Period', '% p48/PBF', '% RT1/PBF', 'Real Time €', 'AASS €', 'Intras €', 'Intras €/MWh', 'AASS €/MWh']
+            df_table_rt5['Period'] = df_table_rt5['Period'].astype(str)
             
             def format_number(num):
                 if pd.isna(num): return "0.0"
                 return f"{num:,.1f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
             formatted_cells = []
-            for i, row in up_m_def.iterrows():
+            for i, row in df_table_rt5.set_index('Period').iterrows():
                 formatted_row = [str(i)] 
-                formatted_row.append(f'{row["% p48/PBF"]:.1%}'.replace(".", ",")) 
-                formatted_row.append(f'{row["% RT1/PBF"]:.1%}'.replace(".", ",")) 
-                for col in up_m_def.columns[2:]:
+                formatted_row.append(f'{row["% p48/PBF"]:.1f}%'.replace(".", ",")) 
+                formatted_row.append(f'{row["% RT1/PBF"]:.1f}%'.replace(".", ",")) 
+                for col in df_table_rt5.columns[3:]:
                     formatted_row.append(format_number(row[col])) 
                 formatted_cells.append(formatted_row)
 
+            st.markdown("##### Resumen de Métricas")
             fig_t, ax_t = plt.subplots(figsize=(12, 4))
             ax_t.axis('tight'); ax_t.axis('off')
-            columns = ['Year_Month'] + up_m_def.columns.tolist()
+            columns = df_table_rt5.columns.tolist()
             table = ax_t.table(cellText=formatted_cells, colLabels=columns, cellLoc='center', loc='center')
             table.auto_set_font_size(False); table.set_fontsize(12); table.scale(1.2, 1.2)
             
@@ -237,44 +246,45 @@ with tab_rt5:
                     cell.set_facecolor('#f9f9f9' if row_idx % 2 == 0 else '#f1f1f2'); cell.set_height(0.1)
             st.pyplot(fig_t)
 
-            # WATERFALL CHART ORIGINAL
-            up_g = up_sum.groupby(['Tech','MA']).sum().reset_index()
-            for k in range(len(up_g)):
-                df = up_g[['MA','Profit_p48','Profit_rt','Profit_tr','Profit_t','Profit_rr','Profit_b','Profit_se','Profit_i','Energy_p48', 'Energy_tr']].copy()
-                df['Profit_total'] = df[['Profit_rt','Profit_tr','Profit_t','Profit_rr','Profit_b','Profit_se','Profit_i']].sum(axis=1)
-                df['Profit_total1'] = df['Profit_p48'] + df['Profit_total']
-                col_div = ['Profit_p48','Profit_rt','Profit_tr','Profit_t','Profit_rr','Profit_b','Profit_se','Profit_i','Profit_total1']
-                df[col_div] = df[col_div].div(df['Energy_p48'] - df['Energy_tr'], axis=0).fillna(0)
-                
-                df_w = df.drop(columns=['Profit_total','Profit_tr','Energy_p48', 'Energy_tr'])
-                df_w.columns = ['MA','Spot','RRTT Ph2', 'Tertiary', 'RR', 'Sec. Band', 'Sec. Energy', 'Intras', 'TOTAL']
-                df_w = df_w[df_w['MA'] == up_g['MA'][k]].T
-                df_w.columns = ['Values']
-                df_w = df_w.drop('MA').reset_index().rename(columns={'index': 'Market'})
+            # WATERFALL CHART
+            st.markdown("##### Distribución del Profit (€/MWh)")
+            cols_to_wf = ['Profit_p48','Profit_rt','Profit_tr','Profit_t','Profit_rr','Profit_b','Profit_se','Profit_i','Energy_p48', 'Energy_tr']
+            df_wf = up[[c for c in cols_to_wf if c in up.columns]].sum(numeric_only=True)
+            
+            div_energy = df_wf.get('Energy_p48', 0) - df_wf.get('Energy_tr', 0)
+            
+            if div_energy > 0:
+                wf_data = pd.DataFrame({
+                    'Market': ['Spot', 'RRTT Ph2', 'Tertiary', 'RR', 'Sec. Band', 'Sec. Energy', 'Intras'],
+                    'Values': [df_wf.get('Profit_p48',0)/div_energy, df_wf.get('Profit_rt',0)/div_energy, df_wf.get('Profit_t',0)/div_energy, 
+                               df_wf.get('Profit_rr',0)/div_energy, df_wf.get('Profit_b',0)/div_energy, df_wf.get('Profit_se',0)/div_energy, df_wf.get('Profit_i',0)/div_energy]
+                })
+                # Sumamos el total
+                wf_data.loc[len(wf_data)] = ['TOTAL', wf_data['Values'].sum()]
                 
                 fig_w, ax_w = plt.subplots(figsize=(10,5))
-                altura_actual = df_w['Values'][0]
-                ax_w.bar(df_w['Market'][0], df_w['Values'][0], color='#add8e6', label='Inicio')
-                ax_w.text(df_w['Market'][0], df_w['Values'][0], f"{df_w['Values'][0]:.1f}", ha='center', va='center')
+                altura_actual = wf_data['Values'][0]
+                ax_w.bar(wf_data['Market'][0], wf_data['Values'][0], color='#add8e6', label='Inicio')
+                ax_w.text(wf_data['Market'][0], wf_data['Values'][0], f"{wf_data['Values'][0]:.1f}", ha='center', va='center')
                 
-                for i in range(1, len(df_w) - 1):
-                    val = df_w['Values'][i]
+                for i in range(1, len(wf_data) - 1):
+                    val = wf_data['Values'][i]
                     color = '#32cd32' if val > 0 else '#ff0000'
                     altura_anterior = altura_actual
                     altura_actual += val
-                    ax_w.bar(df_w['Market'][i], val, bottom=altura_anterior, color=color)
-                    ax_w.text(df_w['Market'][i], altura_actual, f"{val:.1f}", ha='center', va='center')
+                    ax_w.bar(wf_data['Market'][i], val, bottom=altura_anterior, color=color)
+                    ax_w.text(wf_data['Market'][i], altura_actual, f"{val:.1f}", ha='center', va='center')
                     
-                ax_w.bar(df_w['Market'].iloc[-1], df_w['Values'].iloc[-1], color='#5f9ea0', label='Final')
-                ax_w.text(df_w['Market'].iloc[-1], df_w['Values'].iloc[-1], f"{df_w['Values'].iloc[-1]:.1f}", ha='center', va='center')
+                ax_w.bar(wf_data['Market'].iloc[-1], wf_data['Values'].iloc[-1], color='#5f9ea0', label='Final')
+                ax_w.text(wf_data['Market'].iloc[-1], wf_data['Values'].iloc[-1], f"{wf_data['Values'].iloc[-1]:.1f}", ha='center', va='center')
                 
-                plt.xticks(rotation=45)
-                ax_w.set_ylabel('€/MWh')
-                ax_w.set_title(f"{up_g['MA'][k]} - {tech_rt5} Profit")
+                plt.xticks(rotation=45); ax_w.set_ylabel('€/MWh')
+                ax_w.set_title(f"{ma_rt5} - {tech_rt5} Profit")
                 st.pyplot(fig_w)
 
             # GRÁFICO EVOLUCIÓN POR HORA
-            up_h = up_sum.groupby('hour').sum(numeric_only=True).reset_index()
+            st.markdown("##### Evolución por Hora")
+            up_h = up.groupby('hour').sum(numeric_only=True).reset_index()
             column_labels = {'PBF': 'PBF', 'Energy_p48': 'P48', 'Energy_i': 'Intras', 'Energy_AASS': 'AASS', 'Energy_tr': 'RT5'}
             fig_h, ax_h = plt.subplots(figsize=(10, 6))
             for col_id, col_name in column_labels.items():
@@ -302,33 +312,56 @@ with tab_gnera:
         gnwi = allh[(allh['MA'] == 'GNERA') & (allh['Tech'] == 'Wind') & (allh['UP'].isin(UPS_INTERES))].copy()
         
         if gnwi.empty:
-            st.info("No hay datos de GNERA Wind para las instalaciones seleccionadas.")
+            st.info("No hay datos de GNERA Wind para las instalaciones seleccionadas en este mes.")
         else:
             profit_cols_to_sum = list(PROFIT_MAP.keys())
             gnwi['Profit_Total_Extra'] = gnwi[[c for c in profit_cols_to_sum if c in gnwi.columns]].sum(axis=1)
             gnwi['Potencia_MW'] = gnwi['UP'].map(POTENCIA_INSTALADA)
             
-            # Tabla numérica agregada
-            df_agg = gnwi.groupby('UP')[[c for c in profit_cols_to_sum if c in gnwi.columns] + ['Profit_Total_Extra']].sum().reset_index()
-            df_agg['Potencia_MW'] = df_agg['UP'].map(POTENCIA_INSTALADA)
+            # Tabla numérica agregada (Se usa internamente para el Heatmap, no se imprime como tabla aburrida)
+            df_agg_gnera = gnwi.groupby('UP')[[c for c in profit_cols_to_sum if c in gnwi.columns] + ['Profit_Total_Extra']].sum(numeric_only=True).reset_index()
+            df_agg_gnera['Potencia_MW'] = df_agg_gnera['UP'].map(POTENCIA_INSTALADA)
             
-            cols_to_normalize = [c for c in profit_cols_to_sum if c in df_agg.columns] + ['Profit_Total_Extra']
+            cols_to_normalize = [c for c in profit_cols_to_sum if c in df_agg_gnera.columns] + ['Profit_Total_Extra']
             for col in cols_to_normalize:
-                df_agg[f'{col}_eur_per_MW'] = df_agg[col].div(df_agg['Potencia_MW'].replace(0, np.nan)).fillna(0)
+                df_agg_gnera[f'{col}_eur_per_MW'] = df_agg_gnera[col] / df_agg_gnera['Potencia_MW']
             
             rename_map_num = {f'{col}_eur_per_MW': f"{PROFIT_MAP.get(col, 'Profit_Total_Extra')} (€/MW)" for col in cols_to_normalize}
-            df_report_num = df_agg[['UP'] + [f'{col}_eur_per_MW' for col in cols_to_normalize]].rename(columns=rename_map_num)
-            
-            st.markdown("##### Comparativa Numérica Agregada de Extra Profit (€/MW)")
-            st.text(df_report_num.to_string(float_format='{:,.2f}'.format))
+            df_report_num = df_agg_gnera[['UP'] + [f'{col}_eur_per_MW' for col in cols_to_normalize]].rename(columns=rename_map_num)
 
-            # Gráfico de Evolución por Hora (Líneas)
+            # =========================================================
+            # 1. MOVER HEATMAP AL PRINCIPIO
+            # =========================================================
+            st.markdown("##### Resumen (€/MW) como Heatmap")
+            df_heatmap = df_report_num.set_index('UP')
+            df_heatmap.columns = [col.replace(' (€/MW)', '') for col in df_heatmap.columns]
+            
+            if 'Profit_Total_Extra' in df_heatmap.columns:
+                df_heatmap_components = df_heatmap.drop(columns='Profit_Total_Extra')
+                df_heatmap_total = df_heatmap[['Profit_Total_Extra']]
+            else:
+                df_heatmap_components = df_heatmap
+                df_heatmap_total = pd.DataFrame()
+
+            fig_hm, (ax_heat, ax_total) = plt.subplots(1, 2, figsize=(22, 10), gridspec_kw={'width_ratios': [max(1, df_heatmap_components.shape[1]), 1]})
+            sns.heatmap(df_heatmap_components, annot=True, fmt=',.2f', cmap='vlag', center=0, linewidths=.5, annot_kws={"size": 16}, ax=ax_heat)
+            ax_heat.set_title(''); ax_heat.set_ylabel(''); ax_heat.set_xlabel('')
+            plt.setp(ax_heat.get_xticklabels(), rotation=45, ha="right", fontsize=16)
+            
+            if not df_heatmap_total.empty:
+                sns.heatmap(df_heatmap_total, annot=True, fmt=',.2f', cmap='RdYlGn', center=df_heatmap_total.mean().values[0], linewidths=.5, annot_kws={"size": 16, "weight": "bold"}, cbar=False, ax=ax_total)
+                ax_total.set_title('Total', fontsize=16); ax_total.set_yticks([]); ax_total.set_xlabel('')
+            st.pyplot(fig_hm)
+
+            # =========================================================
+            # 2. GRÁFICOS DE EVOLUCIÓN DEBAJO
+            # =========================================================
+            st.markdown("##### Evolución Diaria del Profit Total Normalizado (€/MW)")
             gnwi['Profit_Total_eur_per_MW'] = gnwi['Profit_Total_Extra'].div(gnwi['Potencia_MW']).fillna(0)
             df_hourly_norm_total = gnwi.groupby(['UP', 'hour'])['Profit_Total_eur_per_MW'].sum().reset_index()
             
             fig_evo, ax_evo = plt.subplots(figsize=(15, 8))
             sns.lineplot(data=df_hourly_norm_total, x='hour', y='Profit_Total_eur_per_MW', hue='UP', style='UP', markers=True, dashes=False, ax=ax_evo)
-            ax_evo.set_title('Evolución por Hora del Profit Total Normalizado (€/MW) - UPs Interés', fontsize=16)
             ax_evo.set_ylabel('Profit Total Acumulado por hora (€/MW)', fontsize=12)
             ax_evo.set_xlabel('Hora del Día', fontsize=12)
             ax_evo.grid(True, linestyle='--', alpha=0.6); ax_evo.axhline(0, color='black', linewidth=0.8)
@@ -369,7 +402,7 @@ with tab_gnera:
 
             # Evolución PBF vs Energy_p48
             st.markdown("##### Evolución Horaria PBF vs Energy_p48 (% del Máximo PBF)")
-            df_hourly_energy = gnwi.groupby(['UP', 'hour'])[['PBF', 'Energy_p48']].sum().reset_index()
+            df_hourly_energy = gnwi.groupby(['UP', 'hour'])[['PBF', 'Energy_p48']].sum(numeric_only=True).reset_index()
             max_pbf_values = df_hourly_energy.groupby('UP')['PBF'].transform('max').replace(0, np.nan)
             
             df_norm = pd.DataFrame(index=df_hourly_energy.index)
@@ -391,28 +424,6 @@ with tab_gnera:
                 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, p: f'{y * 100:.0f}%'))
                 ax.grid(True, linestyle='--', alpha=0.6); ax.set_xticks(range(0, 24))
             st.pyplot(fig_en)
-
-            # Heatmap final (el doble)
-            st.markdown("##### Resumen (€/MW) como Heatmap")
-            df_heatmap = df_report_num.set_index('UP')
-            df_heatmap.columns = [col.replace(' (€/MW)', '') for col in df_heatmap.columns]
-            
-            if 'Profit_Total_Extra' in df_heatmap.columns:
-                df_heatmap_components = df_heatmap.drop(columns='Profit_Total_Extra')
-                df_heatmap_total = df_heatmap[['Profit_Total_Extra']]
-            else:
-                df_heatmap_components = df_heatmap
-                df_heatmap_total = pd.DataFrame()
-
-            fig_hm, (ax_heat, ax_total) = plt.subplots(1, 2, figsize=(22, 10), gridspec_kw={'width_ratios': [max(1, df_heatmap_components.shape[1]), 1]})
-            sns.heatmap(df_heatmap_components, annot=True, fmt=',.2f', cmap='vlag', center=0, linewidths=.5, annot_kws={"size": 16}, ax=ax_heat)
-            ax_heat.set_title(''); ax_heat.set_ylabel(''); ax_heat.set_xlabel('')
-            plt.setp(ax_heat.get_xticklabels(), rotation=45, ha="right", fontsize=16)
-            
-            if not df_heatmap_total.empty:
-                sns.heatmap(df_heatmap_total, annot=True, fmt=',.2f', cmap='RdYlGn', center=df_heatmap_total.mean().values[0], linewidths=.5, annot_kws={"size": 16, "weight": "bold"}, cbar=False, ax=ax_total)
-                ax_total.set_title('Total', fontsize=16); ax_total.set_yticks([]); ax_total.set_xlabel('')
-            st.pyplot(fig_hm)
 
     except Exception as e:
         st.warning(f"Error procesando Análisis Gnera: {e}")
@@ -442,14 +453,14 @@ with tab_verbund:
         for col in profit_cols:
             if col not in df_v.columns: df_v[col] = 0
             
-        df_agg_v = df_v.groupby('UP')[profit_cols].sum().reindex(selected_ups_v).reset_index().fillna(0)
+        df_agg_v = df_v.groupby('UP')[profit_cols].sum(numeric_only=True).reindex(selected_ups_v).reset_index().fillna(0)
         df_agg_v['Total Profit'] = df_agg_v[profit_cols].sum(axis=1)
         df_agg_v['Verbund_Pct'] = verbund_percentages
         df_agg_v['Profit Verbund'] = df_agg_v['Total Profit'] * df_agg_v['Verbund_Pct']
         df_agg_v['Potencia MW'] = potencias_vector
         df_agg_v['Profit Verbund / MW'] = df_agg_v['Profit Verbund'] / df_agg_v['Potencia MW']
         
-        total_profits = df_agg_v[profit_cols].sum()
+        total_profits = df_agg_v[profit_cols].sum(numeric_only=True)
         sum_total_profit = df_agg_v['Total Profit'].sum()
         sum_profit_verbund = df_agg_v['Profit Verbund'].sum()
         sum_potencia_mw = df_agg_v['Potencia MW'].sum()
@@ -523,7 +534,6 @@ with tab_evo:
             elif aass_sel == 'sec': aass_sel0 = ['Profit_b', 'Profit_se']
             else: aass_sel0 = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']
             
-            # Recreamos la lógica exacta del usuario
             df_evo['Total_Profit'] = df_evo[[c for c in aass_sel0 if c in df_evo.columns]].sum(axis=1)
             
             grouped_evo = df_evo.groupby(['UP', 'YearMonth']).agg(
