@@ -6,110 +6,156 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # --- 1. CONFIGURACIÓN PÁGINA STREAMLIT ---
+# Debe ser SIEMPRE la primera instrucción
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide")
 
-# --- 2. SISTEMA DE CONTRASEÑA ---
+# --- 2. SISTEMA DE CONTRASEÑA SEGURO ---
 def check_password():
-    """Devuelve True si el usuario introduce la contraseña correcta."""
+    """Devuelve True si el usuario introduce la contraseña correcta o si no hay contraseña configurada."""
     
+    # Comprobación de seguridad: Si no has puesto st.secrets en local, lo avisa y deja pasar
+    try:
+        app_pass = st.secrets["app_password"]
+    except Exception:
+        st.warning("⚠️ Modo Desarrollo: No se ha configurado 'app_password' en st.secrets. Acceso permitido.")
+        return True
+
     def password_entered():
-        """Comprueba si la contraseña es correcta."""
-        # Compara con la contraseña guardada en los secretos de Streamlit
         if st.session_state["password"] == st.secrets["app_password"]:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Borra la contraseña por seguridad
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
-    # Si es la primera vez que entra (no hay estado guardado)
     if "password_correct" not in st.session_state:
         st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
-        st.text_input(
-            "🔑 Introduce la contraseña para acceder al Dashboard:", 
-            type="password", 
-            on_change=password_entered, 
-            key="password"
-        )
+        st.text_input("🔑 Introduce la contraseña:", type="password", on_change=password_entered, key="password")
         return False
-        
-    # Si la contraseña es incorrecta
     elif not st.session_state["password_correct"]:
         st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
-        st.text_input(
-            "🔑 Introduce la contraseña para acceder al Dashboard:", 
-            type="password", 
-            on_change=password_entered, 
-            key="password"
-        )
+        st.text_input("🔑 Introduce la contraseña:", type="password", on_change=password_entered, key="password")
         st.error("😕 Contraseña incorrecta. Inténtalo de nuevo.")
         return False
-        
-    # Si la contraseña es correcta
     else:
         return True
 
-# Si la contraseña no es correcta, detenemos la ejecución del resto del código aquí
 if not check_password():
     st.stop()
 
 # ==========================================
-# A PARTIR DE AQUÍ VA EL RESTO DE TU APLICACIÓN NORMAL
+# A PARTIR DE AQUÍ VA LA APLICACIÓN
 # ==========================================
 st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 
-# --- 3. CARGA DE DATOS ---
+# --- 3. CARGA DE DATOS (CON CONTROL DE ERRORES) ---
 @st.cache_data
 def load_allh_data():
     try:
-        # Leer las dos mitades optimizadas
         df1 = pd.read_parquet('allh_part1.parquet')
         df2 = pd.read_parquet('allh_part2.parquet')
-        # Unirlas en un solo DataFrame
         return pd.concat([df1, df2], ignore_index=True)
     except Exception as e:
-        st.error(f"Error cargando las partes del archivo allh: {e}")
-        return pd.DataFrame()
-
+        return str(e) # Devolvemos el error para mostrarlo
 
 @st.cache_data
 def load_power_data():
     try:
-        # Leemos directamente el parquet de ups que has subido
         df_power = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
         df_power['Power MW'] = pd.to_numeric(df_power['Power MW'], errors='coerce').replace(0, np.nan)
-        df_power = df_power.dropna(subset=['Power MW', 'UP'])
-        return df_power
+        return df_power.dropna(subset=['Power MW', 'UP'])
     except Exception as e:
-        st.error(f"Error cargando datos de potencia (ups_dashboard.parquet): {e}")
-        return pd.DataFrame(columns=['UP', 'Power MW'])
+        return str(e)
 
-# Cargar los datos
+# Cargar datos
 allh = load_allh_data()
 df_power = load_power_data()
 
-# --- 3. BARRA LATERAL (FILTROS INTERACTIVOS) ---
-st.sidebar.header("Filtros de Análisis")
+# Verificar que los datos se cargaron bien
+if isinstance(allh, str):
+    st.error(f"❌ Error al cargar los archivos 'allh' (part1 o part2). Detalles: {allh}")
+    st.stop()
+if isinstance(df_power, str):
+    st.error(f"❌ Error al cargar 'ups_dashboard.parquet'. Detalles: {df_power}")
+    st.stop()
+if allh.empty:
+    st.error("❌ Los archivos de datos están vacíos.")
+    st.stop()
 
-# Selección de mercado
+
+# --- 4. BARRA LATERAL (FILTROS DE FECHAS) ---
+allh['Day'] = pd.to_datetime(allh['Day'])
+min_date = allh['Day'].min().date()
+max_date = allh['Day'].max().date()
+
+st.sidebar.header("📅 Rango de Fechas")
+selected_dates = st.sidebar.date_input(
+    "Selecciona el periodo a analizar:",
+    value=(min_date, max_date),
+    min_value=min_date,
+    max_value=max_date
+)
+
+if len(selected_dates) == 2:
+    start_date, end_date = selected_dates
+else:
+    start_date, end_date = min_date, max_date
+
+# Recortar el dataset al periodo seleccionado
+allh = allh[(allh['Day'].dt.date >= start_date) & (allh['Day'].dt.date <= end_date)]
+
+if allh.empty:
+    st.warning("⚠️ No hay datos para el periodo de fechas seleccionado.")
+    st.stop()
+
+# Título de fechas
+st.markdown(f"<h3 style='text-align: center; color: #4c72b0; background-color: #f0f2f6; padding: 10px; border-radius: 10px;'>"
+            f"📅 Periodo de Análisis: <b>{start_date.strftime('%d/%m/%Y')}</b> al <b>{end_date.strftime('%d/%m/%Y')}</b></h3>", 
+            unsafe_allow_html=True)
+st.markdown("---")
+
+
+# --- 5. BARRA LATERAL (FILTRO DE INSTALACIONES PARA RESALTAR) ---
+st.sidebar.header("🔴 Instalaciones a Resaltar")
+st.sidebar.markdown("Selecciona las UPs que quieres ver marcadas en rojo sobre el resto:")
+
+ups_interes = [
+    'CLIFV30', 'CLIFV31', 'CLIFV32', 'UPBUS', 'UPLMP', 'UPSLN', 
+    'GALPS59', 'GALPS57', 'GALPS56', 'FCTRAV2', 'EFGNRA', 'PEVER', 'PEVER2', 'EAYAMON', 'EGST146'
+]
+installation = [
+    'Pinos Puente 1', 'Pinos Puente 2', 'Pinos Puente 3', 'Buseco', 'Loma', 'La Solana', 
+    'Buseco_Galp', 'Loma_Galp', 'La Solana_Galp', 'Calatrava', 'Bodenaya + Pico + Others', 'Sorolla 1', 'Mallen', 'Ayamonte', 'Barroso'
+]
+
+# Mapa rápido para saber qué MA gestiona cada planta
+ma_mapping = allh[['UP', 'MA']].dropna().drop_duplicates(subset=['UP']).set_index('UP')['MA'].to_dict()
+
+selected_ups = []
+for up, inst in zip(ups_interes, installation):
+    ma_name = ma_mapping.get(up, "Desconocido")
+    display_name = f"{inst} ({ma_name})"
+    
+    # Marcar por defecto algunas como ejemplo
+    default_val = True if up in ['PEVER', 'EGST146'] else False
+    
+    # Si la casilla está marcada, la añadimos a la lista de resaltados
+    if st.sidebar.checkbox(display_name, value=default_val):
+        selected_ups.append(up)
+
+
+# --- 6. BARRA LATERAL (AJUSTES) ---
+st.sidebar.header("⚙️ Configuración de Mercados")
 aass_sel = st.sidebar.radio(
-    "Selección de Mercados (Profit Base)",
+    "Profit Base",
     options=['no_sec', 'sec', 'all'],
     format_func=lambda x: "Sin Secundaria" if x == 'no_sec' else ("Solo Secundaria" if x == 'sec' else "Todos")
 )
 
-# Selección de UPs a resaltar
-todas_las_ups = sorted(allh['UP'].unique().tolist())
-ups_to_highlight = st.sidebar.multiselect(
-    "UPs a Resaltar (Color Rojo)",
-    options=todas_las_ups,
-    default=['PEVER', 'EGST146'] if 'PEVER' in todas_las_ups else []
-)
 
-# MAs excluidos
+# --- 7. PROCESAMIENTO MATEMÁTICO ---
 excluded_MAs = ["ENDESA", "IBERDROLA", "EDP", "NATURGY", "HOLALUZ", "ALDROENERGIA Y SOLUCIONES SL"]
 Energy_ref = 'Energy_p48'
 
-# --- 4. PROCESAMIENTO DE DATOS ---
 if aass_sel == 'no_sec':
     available_profit_cols = [c for c in ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr'] if c in allh.columns]
 elif aass_sel == 'sec':
@@ -117,7 +163,6 @@ elif aass_sel == 'sec':
 else:
     available_profit_cols = [c for c in ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se'] if c in allh.columns]
 
-# Filtrar y preparar DB
 query_cols = [c for c in ['Profit_rt', 'Profit_b'] if c in allh.columns]
 if query_cols:
     for col in query_cols:
@@ -138,47 +183,48 @@ for col in available_profit_cols:
 db['Total_Profit'] = db[available_profit_cols].sum(axis=1) if available_profit_cols else 0
 db = db[~db['MA'].isin(excluded_MAs)]
 
-db['Day'] = pd.to_datetime(db['Day'])
 db['Month'] = db['Day'].dt.to_period('M')
 
 if Energy_ref in db.columns and db[Energy_ref].dtype == 'object':
      db[Energy_ref] = pd.to_numeric(db[Energy_ref].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-# Agrupación Mensual
+# Agrupación y Promedios
 monthly_grouped = db.groupby(['UP', 'Tech', 'MA', 'Month']).agg(
     Monthly_Profit=pd.NamedAgg(column='Total_Profit', aggfunc='sum'),
     Monthly_Energy=pd.NamedAgg(column=Energy_ref, aggfunc='sum')
 ).reset_index()
 
-# Cruce con Potencia del Parquet
 monthly_grouped = pd.merge(monthly_grouped, df_power, on='UP', how='left')
 monthly_grouped['Monthly_Profit_per_MW'] = monthly_grouped['Monthly_Profit'].div(monthly_grouped['Power MW']).fillna(0)
 
-# Promedios
 grouped = monthly_grouped.groupby(['UP', 'Tech', 'MA']).agg(
     Profit_per_MW = pd.NamedAgg(column='Monthly_Profit_per_MW', aggfunc='mean'),
     Total_Energy = pd.NamedAgg(column='Monthly_Energy', aggfunc='sum')
 ).reset_index()
 
-# Textos para gráficos
-start_date = db['Day'].min().strftime('%Y-%m-%d')
-end_date = db['Day'].max().strftime('%Y-%m-%d')
-period_text = f'since {start_date} to {end_date}'
+# Columna clave: Identifica si la UP está marcada en la barra lateral para pintarla de rojo
+grouped['is_Highlighted'] = grouped['UP'].isin(selected_ups)
 
-# --- 5. RENDERIZADO DE GRÁFICOS ---
-st.write("---")
+
+# --- 8. RENDERIZADO DE GRÁFICOS ---
 st.subheader("1. Dispersión General (Eólica y Solar)")
 filtered_data = grouped[grouped['Tech'].isin(['Solar PV', 'Wind'])].copy()
-filtered_data['is_Highlighted'] = filtered_data['UP'].isin(ups_to_highlight)
 filtered_data.sort_values('MA', inplace=True)
 
 col1, col2 = st.columns(2)
 
 with col1:
     fig1, ax1 = plt.subplots(figsize=(10, 6))
+    
+    # Pintamos TODO EL MERCADO (Nube de puntos normal)
     sns.scatterplot(data=filtered_data, x='MA', y='Profit_per_MW', hue='Tech', size='Total_Energy', sizes=(40, 400), alpha=0.7, palette='muted', edgecolor='black', ax=ax1)
-    sns.scatterplot(data=filtered_data[filtered_data['is_Highlighted']], x='MA', y='Profit_per_MW', color='red', s=70, edgecolor='black', marker='o', zorder=10, legend=False, ax=ax1)
-    ax1.set_title(f'Avg. Monthly Profit in €/MW\n{period_text}')
+    
+    # Pintamos ENCIMA LAS RESALTADAS (Puntos Rojos)
+    highlight_data = filtered_data[filtered_data['is_Highlighted']]
+    if not highlight_data.empty:
+        sns.scatterplot(data=highlight_data, x='MA', y='Profit_per_MW', color='red', s=70, edgecolor='black', marker='o', zorder=10, legend=False, ax=ax1)
+        
+    ax1.set_title("Avg. Monthly Profit in €/MW")
     ax1.set_ylabel('€ / MW / Month')
     ax1.tick_params(axis='x', rotation=45)
     ax1.grid(True, linestyle='--', alpha=0.6)
@@ -188,8 +234,11 @@ with col1:
 with col2:
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     sns.boxplot(data=filtered_data, x='MA', y='Profit_per_MW', hue='Tech', showfliers=False, palette='muted', ax=ax2)
-    sns.stripplot(data=filtered_data[filtered_data['is_Highlighted']], x='MA', y='Profit_per_MW', hue='Tech', size=8, color='red', edgecolor='black', dodge=True, legend=False, ax=ax2)
-    ax2.set_title(f'Boxplot: Avg. Monthly Profit (€/MW)\n{period_text}')
+    
+    if not highlight_data.empty:
+        sns.stripplot(data=highlight_data, x='MA', y='Profit_per_MW', hue='Tech', size=8, color='red', edgecolor='black', dodge=True, legend=False, ax=ax2)
+        
+    ax2.set_title("Boxplot: Avg. Monthly Profit (€/MW)")
     ax2.set_ylabel('€ / MW / Month')
     ax2.tick_params(axis='x', rotation=45)
     ax2.grid(True, linestyle='--', alpha=0.6)
@@ -201,38 +250,42 @@ st.subheader("2. Detalle por Tecnología")
 col3, col4 = st.columns(2)
 
 with col3:
-    # Solar PV
     solar_pv_data = grouped[grouped['Tech'] == 'Solar PV'].copy()
-    solar_pv_data['is_Highlighted'] = solar_pv_data['UP'].isin(ups_to_highlight)
     ma_order_solar = solar_pv_data.groupby('MA')['Profit_per_MW'].mean().sort_values(ascending=False).index
     
     if len(ma_order_solar) > 0:
         fig3, ax3 = plt.subplots(figsize=(10, 6))
         sns.boxplot(data=solar_pv_data, x='MA', y='Profit_per_MW', showfliers=False, color='orange', order=ma_order_solar, ax=ax3)
-        sns.stripplot(data=solar_pv_data[solar_pv_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', edgecolor='black', order=ma_order_solar, ax=ax3)
+        
+        highlight_solar = solar_pv_data[solar_pv_data['is_Highlighted']]
+        if not highlight_solar.empty:
+            sns.stripplot(data=highlight_solar, x='MA', y='Profit_per_MW', size=8, color='red', edgecolor='black', order=ma_order_solar, ax=ax3)
+            
         ax3.set_title('SOLAR PV: Boxplot ordered by Avg Profit')
         ax3.tick_params(axis='x', rotation=45)
         ax3.axhline(0, color='grey', linestyle='--')
         st.pyplot(fig3)
     else:
-        st.info("Sin datos de Solar PV")
+        st.info("Sin datos de Solar PV para el periodo seleccionado.")
 
 with col4:
-    # Wind
     wind_data = grouped[grouped['Tech'] == 'Wind'].copy()
-    wind_data['is_Highlighted'] = wind_data['UP'].isin(ups_to_highlight)
     ma_order_wind = wind_data.groupby('MA')['Profit_per_MW'].mean().sort_values(ascending=False).index
     
     if len(ma_order_wind) > 0:
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         sns.boxplot(data=wind_data, x='MA', y='Profit_per_MW', showfliers=False, color='lightgreen', order=ma_order_wind, ax=ax4)
-        sns.stripplot(data=wind_data[wind_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', edgecolor='black', order=ma_order_wind, ax=ax4)
+        
+        highlight_wind = wind_data[wind_data['is_Highlighted']]
+        if not highlight_wind.empty:
+            sns.stripplot(data=highlight_wind, x='MA', y='Profit_per_MW', size=8, color='red', edgecolor='black', order=ma_order_wind, ax=ax4)
+            
         ax4.set_title('WIND: Boxplot ordered by Avg Profit')
         ax4.tick_params(axis='x', rotation=45)
         ax4.axhline(0, color='grey', linestyle='--')
         st.pyplot(fig4)
     else:
-        st.info("Sin datos de Wind")
+        st.info("Sin datos de Wind para el periodo seleccionado.")
 
 st.write("---")
 st.subheader("3. Mapa de Calor (Heatmap) Agregado")
@@ -245,7 +298,7 @@ try:
          
     fig5, ax5 = plt.subplots(figsize=(10, max(6, len(heatmap_data) * 0.4)))
     sns.heatmap(heatmap_data, annot=True, fmt=',.2f', cmap='vlag', center=0, linewidths=.5, ax=ax5)
-    ax5.set_title(f'Average Monthly Profit per MW (€/MW/Month)\n{period_text}')
+    ax5.set_title(f'Average Monthly Profit per MW (€/MW/Month)')
     st.pyplot(fig5)
 except Exception as e:
-    st.error(f"No se pudo generar el Heatmap: {e}")
+    st.error("No hay cruces suficientes de MA/Tech en este periodo para generar el Heatmap.")
