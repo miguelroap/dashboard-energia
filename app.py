@@ -7,12 +7,61 @@ import numpy as np
 
 # --- 1. CONFIGURACIÓN PÁGINA STREAMLIT ---
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide")
+
+# --- 2. SISTEMA DE CONTRASEÑA ---
+def check_password():
+    """Devuelve True si el usuario introduce la contraseña correcta."""
+    
+    def password_entered():
+        """Comprueba si la contraseña es correcta."""
+        # Compara con la contraseña guardada en los secretos de Streamlit
+        if st.session_state["password"] == st.secrets["app_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Borra la contraseña por seguridad
+        else:
+            st.session_state["password_correct"] = False
+
+    # Si es la primera vez que entra (no hay estado guardado)
+    if "password_correct" not in st.session_state:
+        st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
+        st.text_input(
+            "🔑 Introduce la contraseña para acceder al Dashboard:", 
+            type="password", 
+            on_change=password_entered, 
+            key="password"
+        )
+        return False
+        
+    # Si la contraseña es incorrecta
+    elif not st.session_state["password_correct"]:
+        st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
+        st.text_input(
+            "🔑 Introduce la contraseña para acceder al Dashboard:", 
+            type="password", 
+            on_change=password_entered, 
+            key="password"
+        )
+        st.error("😕 Contraseña incorrecta. Inténtalo de nuevo.")
+        return False
+        
+    # Si la contraseña es correcta
+    else:
+        return True
+
+# Si la contraseña no es correcta, detenemos la ejecución del resto del código aquí
+if not check_password():
+    st.stop()
+
+# ==========================================
+# A PARTIR DE AQUÍ VA EL RESTO DE TU APLICACIÓN NORMAL
+# ==========================================
 st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 
-# --- 2. CARGA DE DATOS (CON CACHÉ PARA MAYOR VELOCIDAD) ---
+# --- 3. CARGA DE DATOS ---
 @st.cache_data
 def load_allh_data():
     return pd.read_parquet('allh_dashboard.parquet')
+
 
 @st.cache_data
 def load_power_data():
