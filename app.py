@@ -1,19 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Mar 19 17:14:27 2026
-
-@author: ROAPRIEM
-"""
-
-# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-from google.cloud import bigquery
-from google.oauth2 import service_account
-import json
 
 # --- 1. CONFIGURACIÓN PÁGINA STREAMLIT ---
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide")
@@ -22,31 +12,18 @@ st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 # --- 2. CARGA DE DATOS (CON CACHÉ PARA MAYOR VELOCIDAD) ---
 @st.cache_data
 def load_allh_data():
-    # Carga los datos procesados localmente y subidos al repo
     return pd.read_parquet('allh_dashboard.parquet')
 
 @st.cache_data
 def load_power_data():
-    # Lógica para leer desde Google Cloud BigQuery
-    PROJECT_ID = 'veb-dev-renewables-spain-ijb'
-    DATASET_ID = 'red_electrica_data'
-    
-    # Autenticación: Streamlit Cloud usará st.secrets, en local usará tus credenciales por defecto
     try:
-        if "gcp_service_account" in st.secrets:
-            credentials = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"])
-            client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
-        else:
-            client = bigquery.Client(project=PROJECT_ID)
-            
-        sql = f"SELECT UP, Power_MW as `Power MW` FROM `{PROJECT_ID}.{DATASET_ID}.programming_units_external_table_latest`"
-        df_power = client.query(sql).to_dataframe()
-        
+        # Leemos directamente el parquet de ups que has subido
+        df_power = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
         df_power['Power MW'] = pd.to_numeric(df_power['Power MW'], errors='coerce').replace(0, np.nan)
         df_power = df_power.dropna(subset=['Power MW', 'UP'])
         return df_power
     except Exception as e:
-        st.error(f"Error cargando datos de BigQuery: {e}")
+        st.error(f"Error cargando datos de potencia (ups_dashboard.parquet): {e}")
         return pd.DataFrame(columns=['UP', 'Power MW'])
 
 # Cargar los datos
@@ -116,7 +93,7 @@ monthly_grouped = db.groupby(['UP', 'Tech', 'MA', 'Month']).agg(
     Monthly_Energy=pd.NamedAgg(column=Energy_ref, aggfunc='sum')
 ).reset_index()
 
-# Cruce con Potencia de BQ
+# Cruce con Potencia del Parquet
 monthly_grouped = pd.merge(monthly_grouped, df_power, on='UP', how='left')
 monthly_grouped['Monthly_Profit_per_MW'] = monthly_grouped['Monthly_Profit'].div(monthly_grouped['Power MW']).fillna(0)
 
@@ -171,6 +148,7 @@ with col3:
     solar_pv_data = grouped[grouped['Tech'] == 'Solar PV'].copy()
     solar_pv_data['is_Highlighted'] = solar_pv_data['UP'].isin(ups_to_highlight)
     ma_order_solar = solar_pv_data.groupby('MA')['Profit_per_MW'].mean().sort_values(ascending=False).index
+    
     if len(ma_order_solar) > 0:
         fig3, ax3 = plt.subplots(figsize=(10, 6))
         sns.boxplot(data=solar_pv_data, x='MA', y='Profit_per_MW', showfliers=False, color='orange', order=ma_order_solar, ax=ax3)
@@ -187,6 +165,7 @@ with col4:
     wind_data = grouped[grouped['Tech'] == 'Wind'].copy()
     wind_data['is_Highlighted'] = wind_data['UP'].isin(ups_to_highlight)
     ma_order_wind = wind_data.groupby('MA')['Profit_per_MW'].mean().sort_values(ascending=False).index
+    
     if len(ma_order_wind) > 0:
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         sns.boxplot(data=wind_data, x='MA', y='Profit_per_MW', showfliers=False, color='lightgreen', order=ma_order_wind, ax=ax4)
@@ -201,6 +180,7 @@ with col4:
 st.write("---")
 st.subheader("3. Mapa de Calor (Heatmap) Agregado")
 ma_tech_summary = grouped.groupby(['MA', 'Tech']).agg(Avg_Monthly_Profit_per_MW=('Profit_per_MW', 'mean')).reset_index()
+
 try:
     heatmap_data = ma_tech_summary.pivot(index='MA', columns='Tech', values='Avg_Monthly_Profit_per_MW').fillna(0).sort_index()
     if all(col in heatmap_data.columns for col in ['Wind', 'Solar PV']):
@@ -211,4 +191,4 @@ try:
     ax5.set_title(f'Average Monthly Profit per MW (€/MW/Month)\n{period_text}')
     st.pyplot(fig5)
 except Exception as e:
-    st.error("No se pudo generar el Heatmap por falta de cruces MA/Tech.")
+    st.error(f"No se pudo generar el Heatmap: {e}")
