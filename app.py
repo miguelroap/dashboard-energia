@@ -45,23 +45,24 @@ if not check_password():
 # ==========================================
 st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 
-# --- 3. CARGA DE DATOS OPTIMIZADA EN RAM ---
+# --- 3. CARGA DE DATOS OPTIMIZADA EN RAM (PRUEBA SOLO PARTE 1) ---
 @st.cache_data
 def load_allh_data():
     try:
+        import pyarrow.parquet as pq
+        
         # Analizamos qué columnas tiene el archivo realmente
         schema = pq.read_schema('allh_part1.parquet')
         
-        # DEFINIMOS SOLO LAS COLUMNAS QUE USA EL DASHBOARD (Ahorro del 75% de RAM)
+        # DEFINIMOS SOLO LAS COLUMNAS QUE USA EL DASHBOARD
         columnas_necesarias = ['UP', 'MA', 'Tech', 'Day', 'Energy_p48', 
                                'Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']
         
         cols_to_load = [c for c in columnas_necesarias if c in schema.names]
         
-        # Leemos solo lo necesario
+        # LEEMOS Y DEVOLVEMOS EXCLUSIVAMENTE LA PARTE 1
         df1 = pd.read_parquet('allh_part1.parquet', columns=cols_to_load)
-        #df2 = pd.read_parquet('allh_part2.parquet', columns=cols_to_load)
-        #return pd.concat([df1, df2], ignore_index=True)
+        
         return df1
     except Exception as e:
         return str(e)
