@@ -7,74 +7,22 @@ import numpy as np
 
 # --- 1. CONFIGURACIÓN PÁGINA STREAMLIT ---
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide")
-
-# --- 2. SISTEMA DE CONTRASEÑA ---
-def check_password():
-    """Devuelve True si el usuario introduce la contraseña correcta."""
-    
-    def password_entered():
-        """Comprueba si la contraseña es correcta."""
-        # Compara con la contraseña guardada en los secretos de Streamlit
-        if st.session_state["password"] == st.secrets["app_password"]:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Borra la contraseña por seguridad
-        else:
-            st.session_state["password_correct"] = False
-
-    # Si es la primera vez que entra (no hay estado guardado)
-    if "password_correct" not in st.session_state:
-        st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
-        st.text_input(
-            "🔑 Introduce la contraseña para acceder al Dashboard:", 
-            type="password", 
-            on_change=password_entered, 
-            key="password"
-        )
-        return False
-        
-    # Si la contraseña es incorrecta
-    elif not st.session_state["password_correct"]:
-        st.markdown("<h1 style='text-align: center;'>🔒 Acceso Restringido</h1>", unsafe_allow_html=True)
-        st.text_input(
-            "🔑 Introduce la contraseña para acceder al Dashboard:", 
-            type="password", 
-            on_change=password_entered, 
-            key="password"
-        )
-        st.error("😕 Contraseña incorrecta. Inténtalo de nuevo.")
-        return False
-        
-    # Si la contraseña es correcta
-    else:
-        return True
-
-# Si la contraseña no es correcta, detenemos la ejecución del resto del código aquí
-if not check_password():
-    st.stop()
-
-# ==========================================
-# A PARTIR DE AQUÍ VA EL RESTO DE TU APLICACIÓN NORMAL
-# ==========================================
 st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 
-# --- 3. CARGA DE DATOS ---
+# --- 2. CARGA DE DATOS (CON CACHÉ PARA MAYOR VELOCIDAD) ---
 @st.cache_data
 def load_allh_data():
     try:
-        # Leer las dos mitades optimizadas
         df1 = pd.read_parquet('allh_part1.parquet')
         df2 = pd.read_parquet('allh_part2.parquet')
-        # Unirlas en un solo DataFrame
         return pd.concat([df1, df2], ignore_index=True)
     except Exception as e:
         st.error(f"Error cargando las partes del archivo allh: {e}")
         return pd.DataFrame()
 
-
 @st.cache_data
 def load_power_data():
     try:
-        # Leemos directamente el parquet de ups que has subido
         df_power = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
         df_power['Power MW'] = pd.to_numeric(df_power['Power MW'], errors='coerce').replace(0, np.nan)
         df_power = df_power.dropna(subset=['Power MW', 'UP'])
@@ -83,33 +31,98 @@ def load_power_data():
         st.error(f"Error cargando datos de potencia (ups_dashboard.parquet): {e}")
         return pd.DataFrame(columns=['UP', 'Power MW'])
 
-# Cargar los datos
+# Cargar los datos a la memoria RAM de la web
 allh = load_allh_data()
 df_power = load_power_data()
 
-# --- 3. BARRA LATERAL (FILTROS INTERACTIVOS) ---
-st.sidebar.header("Filtros de Análisis")
+# Asegurarnos de que 'Day' es formato fecha
+allh['Day'] = pd.to_datetime(allh['Day'])
 
-# Selección de mercado
+# --- 3. BARRA LATERAL (FILTROS INTERACTIVOS) ---
+
+# --- A. Filtro de Fechas ---
+st.sidebar.header("📅 Rango de Fechas")
+min_date = allh['Day'].min().date()
+max_date = allh['Day'].max().date()
+
+selected_dates = st.sidebar.date_input(
+    "Selecciona el periodo a analizar:",
+    value=(min_date, max_date),
+    min_value=min_date,
+    max_value=max_date
+)
+
+# Controlar que se hayan seleccionado fecha de inicio y fin
+if len(selected_dates) == 2:
+    start_date, end_date = selected_dates
+else:
+    start_date, end_date = min_date, max_date
+
+# Aplicar el filtro de fechas al dataset
+allh = allh[(allh['Day'].dt.date >= start_date) & (allh['Day'].dt.date <= end_date)]
+
+# Mostrar el periodo seleccionado claramente arriba
+st.markdown(f"<h3 style='text-align: center; color: #4c72b0; background-color: #f0f2f6; padding: 10px; border-radius: 10px;'>"
+            f"📅 Periodo de Análisis: <b>{start_date.strftime('%d/%m/%Y')}</b> al <b>{end_date.strftime('%d/%m/%Y')}</b></h3>", 
+            unsafe_allow_html=True)
+st.markdown("---")
+
+# --- B. Filtro de Instalaciones (UPs personalizadas) ---
+st.sidebar.header("🏭 Instalaciones de Interés")
+
+ups_interes = [
+    'CLIFV30', 'CLIFV31', 'CLIFV32', 'UPBUS', 'UPLMP', 'UPSLN', 
+    'GALPS59', 'GALPS57', 'GALPS56', 'FCTRAV2', 'EFGNRA', 'PEVER', 'PEVER2', 'EAYAMON', 'EGST146'
+]
+
+installation = [
+    'Pinos Puente 1', 'Pinos Puente 2', 'Pinos Puente 3', 'Buseco', 'Loma', 'La Solana', 
+    'Buseco_Galp', 'Loma_Galp', 'La Solana_Galp', 'Calatrava', 'Bodenaya + Pico + Others', 'Sorolla 1', 'Mallen', 'Ayamonte', 'Barroso'
+]
+
+# Diccionario rápido para saber qué MA tiene cada UP (evitando fallos si alguna UP no actuó ese mes)
+ma_mapping = allh[['UP', 'MA']].dropna().drop_duplicates(subset=['UP']).set_index('UP')['MA'].to_dict()
+
+selected_ups = []
+
+# Crear las casillas de verificación en la barra lateral
+for up, inst in zip(ups_interes, installation):
+    ma_name = ma_mapping.get(up, "MA Desconocido")
+    display_name = f"{inst} ({ma_name})"
+    
+    # Creamos un checkbox por cada planta. Value=True significa que nacen marcados por defecto.
+    if st.sidebar.checkbox(display_name, value=True):
+        selected_ups.append(up)
+
+# Comprobar si no hay nada seleccionado
+if not selected_ups:
+    st.warning("⚠️ Selecciona al menos una instalación en el menú izquierdo para visualizar los gráficos.")
+    st.stop()
+
+# ¡APLICAMOS EL FILTRO! Nos quedamos solo con las UPs que estén marcadas
+allh = allh[allh['UP'].isin(selected_ups)]
+
+
+# --- C. Filtros Adicionales ---
+st.sidebar.header("⚙️ Configuración Adicional")
 aass_sel = st.sidebar.radio(
     "Selección de Mercados (Profit Base)",
     options=['no_sec', 'sec', 'all'],
     format_func=lambda x: "Sin Secundaria" if x == 'no_sec' else ("Solo Secundaria" if x == 'sec' else "Todos")
 )
 
-# Selección de UPs a resaltar
-todas_las_ups = sorted(allh['UP'].unique().tolist())
+# Selección de UPs a resaltar en rojo (solo permite elegir de entre las que están marcadas arriba)
 ups_to_highlight = st.sidebar.multiselect(
-    "UPs a Resaltar (Color Rojo)",
-    options=todas_las_ups,
-    default=['PEVER', 'EGST146'] if 'PEVER' in todas_las_ups else []
+    "🔴 UPs a Resaltar (Puntos Rojos)",
+    options=selected_ups,
+    default=[up for up in ['PEVER', 'EGST146'] if up in selected_ups]
 )
 
-# MAs excluidos
+
+# --- 4. PROCESAMIENTO DE DATOS ---
 excluded_MAs = ["ENDESA", "IBERDROLA", "EDP", "NATURGY", "HOLALUZ", "ALDROENERGIA Y SOLUCIONES SL"]
 Energy_ref = 'Energy_p48'
 
-# --- 4. PROCESAMIENTO DE DATOS ---
 if aass_sel == 'no_sec':
     available_profit_cols = [c for c in ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr'] if c in allh.columns]
 elif aass_sel == 'sec':
@@ -117,7 +130,7 @@ elif aass_sel == 'sec':
 else:
     available_profit_cols = [c for c in ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se'] if c in allh.columns]
 
-# Filtrar y preparar DB
+# Variables de rentabilidad
 query_cols = [c for c in ['Profit_rt', 'Profit_b'] if c in allh.columns]
 if query_cols:
     for col in query_cols:
@@ -138,7 +151,6 @@ for col in available_profit_cols:
 db['Total_Profit'] = db[available_profit_cols].sum(axis=1) if available_profit_cols else 0
 db = db[~db['MA'].isin(excluded_MAs)]
 
-db['Day'] = pd.to_datetime(db['Day'])
 db['Month'] = db['Day'].dt.to_period('M')
 
 if Energy_ref in db.columns and db[Energy_ref].dtype == 'object':
@@ -154,19 +166,14 @@ monthly_grouped = db.groupby(['UP', 'Tech', 'MA', 'Month']).agg(
 monthly_grouped = pd.merge(monthly_grouped, df_power, on='UP', how='left')
 monthly_grouped['Monthly_Profit_per_MW'] = monthly_grouped['Monthly_Profit'].div(monthly_grouped['Power MW']).fillna(0)
 
-# Promedios
+# Promedios de la métrica por UP, Tech y MA
 grouped = monthly_grouped.groupby(['UP', 'Tech', 'MA']).agg(
     Profit_per_MW = pd.NamedAgg(column='Monthly_Profit_per_MW', aggfunc='mean'),
     Total_Energy = pd.NamedAgg(column='Monthly_Energy', aggfunc='sum')
 ).reset_index()
 
-# Textos para gráficos
-start_date = db['Day'].min().strftime('%Y-%m-%d')
-end_date = db['Day'].max().strftime('%Y-%m-%d')
-period_text = f'since {start_date} to {end_date}'
 
 # --- 5. RENDERIZADO DE GRÁFICOS ---
-st.write("---")
 st.subheader("1. Dispersión General (Eólica y Solar)")
 filtered_data = grouped[grouped['Tech'].isin(['Solar PV', 'Wind'])].copy()
 filtered_data['is_Highlighted'] = filtered_data['UP'].isin(ups_to_highlight)
@@ -178,7 +185,7 @@ with col1:
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     sns.scatterplot(data=filtered_data, x='MA', y='Profit_per_MW', hue='Tech', size='Total_Energy', sizes=(40, 400), alpha=0.7, palette='muted', edgecolor='black', ax=ax1)
     sns.scatterplot(data=filtered_data[filtered_data['is_Highlighted']], x='MA', y='Profit_per_MW', color='red', s=70, edgecolor='black', marker='o', zorder=10, legend=False, ax=ax1)
-    ax1.set_title(f'Avg. Monthly Profit in €/MW\n{period_text}')
+    ax1.set_title(f'Avg. Monthly Profit in €/MW')
     ax1.set_ylabel('€ / MW / Month')
     ax1.tick_params(axis='x', rotation=45)
     ax1.grid(True, linestyle='--', alpha=0.6)
@@ -189,7 +196,7 @@ with col2:
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     sns.boxplot(data=filtered_data, x='MA', y='Profit_per_MW', hue='Tech', showfliers=False, palette='muted', ax=ax2)
     sns.stripplot(data=filtered_data[filtered_data['is_Highlighted']], x='MA', y='Profit_per_MW', hue='Tech', size=8, color='red', edgecolor='black', dodge=True, legend=False, ax=ax2)
-    ax2.set_title(f'Boxplot: Avg. Monthly Profit (€/MW)\n{period_text}')
+    ax2.set_title(f'Boxplot: Avg. Monthly Profit (€/MW)')
     ax2.set_ylabel('€ / MW / Month')
     ax2.tick_params(axis='x', rotation=45)
     ax2.grid(True, linestyle='--', alpha=0.6)
@@ -215,7 +222,7 @@ with col3:
         ax3.axhline(0, color='grey', linestyle='--')
         st.pyplot(fig3)
     else:
-        st.info("Sin datos de Solar PV")
+        st.info("Sin datos de Solar PV para las instalaciones seleccionadas")
 
 with col4:
     # Wind
@@ -232,7 +239,7 @@ with col4:
         ax4.axhline(0, color='grey', linestyle='--')
         st.pyplot(fig4)
     else:
-        st.info("Sin datos de Wind")
+        st.info("Sin datos de Wind para las instalaciones seleccionadas")
 
 st.write("---")
 st.subheader("3. Mapa de Calor (Heatmap) Agregado")
@@ -245,7 +252,7 @@ try:
          
     fig5, ax5 = plt.subplots(figsize=(10, max(6, len(heatmap_data) * 0.4)))
     sns.heatmap(heatmap_data, annot=True, fmt=',.2f', cmap='vlag', center=0, linewidths=.5, ax=ax5)
-    ax5.set_title(f'Average Monthly Profit per MW (€/MW/Month)\n{period_text}')
+    ax5.set_title(f'Average Monthly Profit per MW (€/MW/Month)')
     st.pyplot(fig5)
 except Exception as e:
-    st.error(f"No se pudo generar el Heatmap: {e}")
+    st.error("Selecciona al menos dos combinaciones MA/Tech diferentes para poder generar el Heatmap.")
