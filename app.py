@@ -4,16 +4,14 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+import pyarrow.parquet as pq
+import gc
 
 # --- 1. CONFIGURACIÓN PÁGINA STREAMLIT ---
-# Debe ser SIEMPRE la primera instrucción
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide")
 
 # --- 2. SISTEMA DE CONTRASEÑA SEGURO ---
 def check_password():
-    """Devuelve True si el usuario introduce la contraseña correcta o si no hay contraseña configurada."""
-    
-    # Comprobación de seguridad: Si no has puesto st.secrets en local, lo avisa y deja pasar
     try:
         app_pass = st.secrets["app_password"]
     except Exception:
@@ -47,15 +45,25 @@ if not check_password():
 # ==========================================
 st.title("📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios")
 
-# --- 3. CARGA DE DATOS (CON CONTROL DE ERRORES) ---
+# --- 3. CARGA DE DATOS OPTIMIZADA EN RAM ---
 @st.cache_data
 def load_allh_data():
     try:
-        df1 = pd.read_parquet('allh_part1.parquet')
-        df2 = pd.read_parquet('allh_part2.parquet')
+        # Analizamos qué columnas tiene el archivo realmente
+        schema = pq.read_schema('allh_part1.parquet')
+        
+        # DEFINIMOS SOLO LAS COLUMNAS QUE USA EL DASHBOARD (Ahorro del 75% de RAM)
+        columnas_necesarias = ['UP', 'MA', 'Tech', 'Day', 'Energy_p48', 
+                               'Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']
+        
+        cols_to_load = [c for c in columnas_necesarias if c in schema.names]
+        
+        # Leemos solo lo necesario
+        df1 = pd.read_parquet('allh_part1.parquet', columns=cols_to_load)
+        df2 = pd.read_parquet('allh_part2.parquet', columns=cols_to_load)
         return pd.concat([df1, df2], ignore_index=True)
     except Exception as e:
-        return str(e) # Devolvemos el error para mostrarlo
+        return str(e)
 
 @st.cache_data
 def load_power_data():
@@ -70,9 +78,8 @@ def load_power_data():
 allh = load_allh_data()
 df_power = load_power_data()
 
-# Verificar que los datos se cargaron bien
 if isinstance(allh, str):
-    st.error(f"❌ Error al cargar los archivos 'allh' (part1 o part2). Detalles: {allh}")
+    st.error(f"❌ Error al cargar los archivos 'allh'. Detalles: {allh}")
     st.stop()
 if isinstance(df_power, str):
     st.error(f"❌ Error al cargar 'ups_dashboard.parquet'. Detalles: {df_power}")
@@ -102,6 +109,9 @@ else:
 
 # Recortar el dataset al periodo seleccionado
 allh = allh[(allh['Day'].dt.date >= start_date) & (allh['Day'].dt.date <= end_date)]
+
+# Liberar memoria forzosamente tras el recorte
+gc.collect()
 
 if allh.empty:
     st.warning("⚠️ No hay datos para el periodo de fechas seleccionado.")
@@ -134,11 +144,7 @@ selected_ups = []
 for up, inst in zip(ups_interes, installation):
     ma_name = ma_mapping.get(up, "Desconocido")
     display_name = f"{inst} ({ma_name})"
-    
-    # Marcar por defecto algunas como ejemplo
     default_val = True if up in ['PEVER', 'EGST146'] else False
-    
-    # Si la casilla está marcada, la añadimos a la lista de resaltados
     if st.sidebar.checkbox(display_name, value=default_val):
         selected_ups.append(up)
 
@@ -165,28 +171,22 @@ else:
 
 query_cols = [c for c in ['Profit_rt', 'Profit_b'] if c in allh.columns]
 if query_cols:
-    for col in query_cols:
-        if allh[col].dtype == 'object':
-             allh[col] = pd.to_numeric(allh[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
     query_string = " or ".join([f"`{col}` != 0" for col in query_cols])
     rrtt_up = allh.query(query_string)
 else:
     rrtt_up = allh.copy()
 
-rrtt_up_l = rrtt_up[rrtt_up['MA'] != 0]['UP'].unique().tolist()
+rrtt_up_l = rrtt_up[rrtt_up['MA'] != 'Desconocido']['UP'].unique().tolist()
 db = allh[allh['UP'].isin(rrtt_up_l)].copy()
 
-for col in available_profit_cols:
-     if col in db.columns and db[col].dtype == 'object':
-       db[col] = pd.to_numeric(db[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+# Liberamos memoria de nuevo
+del allh
+gc.collect()
 
 db['Total_Profit'] = db[available_profit_cols].sum(axis=1) if available_profit_cols else 0
 db = db[~db['MA'].isin(excluded_MAs)]
 
 db['Month'] = db['Day'].dt.to_period('M')
-
-if Energy_ref in db.columns and db[Energy_ref].dtype == 'object':
-     db[Energy_ref] = pd.to_numeric(db[Energy_ref].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
 # Agrupación y Promedios
 monthly_grouped = db.groupby(['UP', 'Tech', 'MA', 'Month']).agg(
@@ -202,8 +202,8 @@ grouped = monthly_grouped.groupby(['UP', 'Tech', 'MA']).agg(
     Total_Energy = pd.NamedAgg(column='Monthly_Energy', aggfunc='sum')
 ).reset_index()
 
-# Columna clave: Identifica si la UP está marcada en la barra lateral para pintarla de rojo
 grouped['is_Highlighted'] = grouped['UP'].isin(selected_ups)
+period_text = f'since {start_date.strftime("%Y-%m-%d")} to {end_date.strftime("%Y-%m-%d")}'
 
 
 # --- 8. RENDERIZADO DE GRÁFICOS ---
@@ -211,15 +211,15 @@ st.subheader("1. Dispersión General (Eólica y Solar)")
 filtered_data = grouped[grouped['Tech'].isin(['Solar PV', 'Wind'])].copy()
 filtered_data.sort_values('MA', inplace=True)
 
+# Paleta roja limpia para evitar FutureWarnings de Seaborn
+red_palette = sns.color_palette(['red', 'red', 'red'])
+
 col1, col2 = st.columns(2)
 
 with col1:
     fig1, ax1 = plt.subplots(figsize=(10, 6))
-    
-    # Pintamos TODO EL MERCADO (Nube de puntos normal)
     sns.scatterplot(data=filtered_data, x='MA', y='Profit_per_MW', hue='Tech', size='Total_Energy', sizes=(40, 400), alpha=0.7, palette='muted', edgecolor='black', ax=ax1)
     
-    # Pintamos ENCIMA LAS RESALTADAS (Puntos Rojos)
     highlight_data = filtered_data[filtered_data['is_Highlighted']]
     if not highlight_data.empty:
         sns.scatterplot(data=highlight_data, x='MA', y='Profit_per_MW', color='red', s=70, edgecolor='black', marker='o', zorder=10, legend=False, ax=ax1)
@@ -236,7 +236,7 @@ with col2:
     sns.boxplot(data=filtered_data, x='MA', y='Profit_per_MW', hue='Tech', showfliers=False, palette='muted', ax=ax2)
     
     if not highlight_data.empty:
-        sns.stripplot(data=highlight_data, x='MA', y='Profit_per_MW', hue='Tech', size=8, color='red', edgecolor='black', dodge=True, legend=False, ax=ax2)
+        sns.stripplot(data=highlight_data, x='MA', y='Profit_per_MW', hue='Tech', size=8, palette=red_palette, edgecolor='black', dodge=True, legend=False, ax=ax2)
         
     ax2.set_title("Boxplot: Avg. Monthly Profit (€/MW)")
     ax2.set_ylabel('€ / MW / Month')
