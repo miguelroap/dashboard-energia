@@ -60,8 +60,9 @@ def load_allh_data():
         
         # Leemos solo lo necesario
         df1 = pd.read_parquet('allh_part1.parquet', columns=cols_to_load)
-        df2 = pd.read_parquet('allh_part2.parquet', columns=cols_to_load)
-        return pd.concat([df1, df2], ignore_index=True)
+        #df2 = pd.read_parquet('allh_part2.parquet', columns=cols_to_load)
+        #return pd.concat([df1, df2], ignore_index=True)
+        return df1
     except Exception as e:
         return str(e)
 
