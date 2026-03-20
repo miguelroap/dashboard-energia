@@ -25,7 +25,6 @@ st.markdown("""
 # ==============================================================================
 # REORDENACIÓN DEL SIDEBAR CON CONTENEDORES
 # ==============================================================================
-# Creamos "huecos" visuales en el orden exacto que has pedido
 cont_date = st.sidebar.container()
 st.sidebar.markdown("---")
 cont_nav = st.sidebar.container()
@@ -34,7 +33,7 @@ cont_mode = st.sidebar.container()
 st.sidebar.markdown("---")
 cont_lang = st.sidebar.container()
 
-# 4. IDIOMA (Se ejecuta lógico primero para tener la función de traducción, pero se pinta el último)
+# --- IDIOMA ---
 lang = cont_lang.radio("🌐 Language / Idioma", ["English", "Español"])
 
 def t(en, es):
@@ -72,7 +71,7 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-# 3. ANALYSIS MODE (Y Selector de Meses)
+# --- ANALYSIS MODE ---
 cont_mode.header(t("🔍 Analysis Mode", "🔍 Modo de Análisis"))
 modo_opciones = [
     t("📅 Strategic Mode (Daily - Full Year)", "📅 Modo Estratégico (Diario - Año Completo)"),
@@ -146,7 +145,7 @@ for col in cols_to_ensure:
     else: allh_full[col] = pd.to_numeric(allh_full[col], errors='coerce').fillna(0)
 gc.collect()
 
-# 1. RANGO DE FECHAS (Ahora que los datos están cargados, lo mandamos al contenedor de arriba)
+# 1. RANGO DE FECHAS
 cont_date.header(t("📅 Date Range", "📅 Rango de Fechas"))
 min_date, max_date = allh_full['Day'].min().date(), allh_full['Day'].max().date()
 selected_dates = cont_date.date_input(t("Select period:", "Selecciona periodo:"), value=(min_date, max_date), min_value=min_date, max_value=max_date)
@@ -164,10 +163,8 @@ name_gnera = t("📊 Gnera Analysis", "📊 Análisis Gnera")
 name_verbund = t("💶 Verbund Profit", "💶 Beneficio Verbund")
 name_evo = t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 
-menu_options = [name_main, name_mra, name_gnera, name_verbund, name_evo]
-if is_hourly:
-    menu_options.insert(2, name_rt5)
-
+# La pestaña RT5 ahora es fija en ambos modos
+menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo]
 seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
@@ -232,7 +229,6 @@ if seleccion_menu == name_main:
 elif seleccion_menu == name_mra:
     st.markdown(f'<div class="section-title">{t("MRA Analysis - Technology - Installation", "Análisis MRA - Tecnología - Instalación")}</div>', unsafe_allow_html=True)
     try:
-        # 1. Filtro estricto añadido en MRA
         only_qualified = st.checkbox(t("Only qualified in Ancillary Services (RRTT, Sec. Band, Tertiary)", "Solo cualificadas en Servicios de Ajuste (RRTT, Banda Sec., Terciaria)"), value=True)
         
         if only_qualified:
@@ -477,9 +473,9 @@ elif seleccion_menu == name_mra:
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 3: DETALLE RT5 (SOLO EN MODO HORARIO)
+# SECCIÓN 3: DETALLE RT5 (Funciona en Diario y Horario)
 # ==============================================================================
-elif is_hourly and seleccion_menu == name_rt5:
+elif seleccion_menu == name_rt5:
     st.markdown(f'<div class="section-title">{t("RT5 Detail: Prices & Offers", "Detalle RT5: Precios y Ofertas")}</div>', unsafe_allow_html=True)
     try:
         filtered_rt5 = allh.loc[(allh['Tech'].isin(['Solar PV', 'Wind'])) & (allh['Profit_tr_s'] != 0)].copy()
@@ -490,15 +486,25 @@ elif is_hourly and seleccion_menu == name_rt5:
         else:
             col_rt_a1, col_rt_a2 = st.columns(2)
             with col_rt_a1:
-                st.markdown(f"**{t('All Market (Min Bid < -50€)', 'Todo el Mercado (Min Bid < -50€)')}**")
+                st.markdown(f"**{t('All Market Overview', 'Resumen de Todo el Mercado')}**")
                 total_p_ma = filtered_rt5.groupby('MA', observed=True)['Profit_tr_s'].sum()
                 e_p48_tr_diff_ma = filtered_rt5['Energy_p48'] - filtered_rt5['Energy_tr']
                 eur_mwh_r_ma = filtered_rt5.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_ma[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                 w_avg_bid_ma = filtered_rt5.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
-                res_ma = pd.DataFrame({'Total Profit RT5': total_p_ma, '€/MWh_resource': eur_mwh_r_ma, 'Weighted Avg Bid': w_avg_bid_ma, 'Max Bid': filtered_rt5.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': filtered_rt5.groupby('MA', observed=True)['Price_RT5'].min()})
-                filtered_res_ma = res_ma.dropna(subset=['Min Bid']); filtered_res_ma = filtered_res_ma[filtered_res_ma['Min Bid'] < -50]
-                if filtered_res_ma.empty: st.info(t("No matches < -50€.", "Sin ofertas < -50€."))
-                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
+                
+                # Nombres de columnas dinámicos según el modo
+                max_name = 'Max Bid (€)' if is_hourly else 'Max Daily Avg (€)'
+                min_name = 'Min Bid (€)' if is_hourly else 'Min Daily Avg (€)'
+                
+                res_ma = pd.DataFrame({'Total Profit RT5': total_p_ma, '€/MWh_resource': eur_mwh_r_ma, 'Weighted Avg Bid': w_avg_bid_ma, max_name: filtered_rt5.groupby('MA', observed=True)['Price_RT5'].max(), min_name: filtered_rt5.groupby('MA', observed=True)['Price_RT5'].min()})
+                filtered_res_ma = res_ma.dropna(subset=[min_name])
+                
+                # Aplicamos el filtro de -50€ SOLO en modo horario (en diario casi nunca baja la media a -50€)
+                if is_hourly:
+                    filtered_res_ma = filtered_res_ma[filtered_res_ma[min_name] < -50]
+                    
+                if filtered_res_ma.empty: st.info(t("No matches.", "Sin ofertas en este rango."))
+                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', max_name: '{:.2f}', min_name: '{:.2f}'}), width='stretch')
 
             with col_rt_a2:
                 st.markdown(f"**{t('Specific Installations', 'Instalaciones Específicas (FCTRAV2, PEVER)')}**")
@@ -508,22 +514,27 @@ elif is_hourly and seleccion_menu == name_rt5:
                     e_p48_tr_diff_v = up_rt5_v['Energy_p48'] - up_rt5_v['Energy_tr']
                     eur_mwh_r_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
-                    res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, 'Max Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=['Min Bid'])
-                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
+                    res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, max_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), min_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=[min_name])
+                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', max_name: '{:.2f}', min_name: '{:.2f}'}), width='stretch')
 
-            if not filtered_res_ma.empty:
-                st.markdown("---")
-                col_rt_b1, col_rt_b2 = st.columns(2)
-                mas_to_plot_list = [m for m in filtered_res_ma.index if m != 'ESTABANELL Y PAHISA MERCATOR']
-                df_graph = filtered_rt5.loc[filtered_rt5['MA'].isin(mas_to_plot_list)]
-                with col_rt_b1:
-                    fig_s, ax_s = plt.subplots(figsize=(8, 5))
-                    sns.scatterplot(data=df_graph, x='MA', y='Price_RT5', alpha=0.3, s=30, color='#40466e', ax=ax_s)
-                    ax_s.set_title("Scatter: Price_RT5 vs MA", fontsize=10); ax_s.tick_params(axis='x', rotation=90); st.pyplot(fig_s); plt.close(fig_s)
-                with col_rt_b2:
-                    fig_b, ax_b = plt.subplots(figsize=(8, 5))
-                    sns.boxplot(data=df_graph, x='MA', y='Price_RT5', showfliers=False, palette='vlag', ax=ax_b)
-                    ax_b.set_title("Boxplot: Price_RT5 matched by Market Agent", fontsize=10); ax_b.tick_params(axis='x', rotation=90); st.pyplot(fig_b); plt.close(fig_b)
+            # Gráficos detallados solo en modo horario
+            if is_hourly:
+                if not filtered_res_ma.empty:
+                    st.markdown("---")
+                    col_rt_b1, col_rt_b2 = st.columns(2)
+                    mas_to_plot_list = [m for m in filtered_res_ma.index if m != 'ESTABANELL Y PAHISA MERCATOR']
+                    df_graph = filtered_rt5.loc[filtered_rt5['MA'].isin(mas_to_plot_list)]
+                    with col_rt_b1:
+                        fig_s, ax_s = plt.subplots(figsize=(8, 5))
+                        sns.scatterplot(data=df_graph, x='MA', y='Price_RT5', alpha=0.3, s=30, color='#40466e', ax=ax_s)
+                        ax_s.set_title("Scatter: Price_RT5 vs MA", fontsize=10); ax_s.tick_params(axis='x', rotation=90); st.pyplot(fig_s); plt.close(fig_s)
+                    with col_rt_b2:
+                        fig_b, ax_b = plt.subplots(figsize=(8, 5))
+                        sns.boxplot(data=df_graph, x='MA', y='Price_RT5', showfliers=False, palette='vlag', ax=ax_b)
+                        ax_b.set_title("Boxplot: Price_RT5 matched by Market Agent", fontsize=10); ax_b.tick_params(axis='x', rotation=90); st.pyplot(fig_b); plt.close(fig_b)
+            else:
+                st.info(t("Scatter and box plots of individual offers require Operational Mode. Switch to Hourly Mode to see detailed bid dispersion.", "Los gráficos de dispersión y cajas de ofertas individuales requieren el Modo Operativo. Cambia al modo horario para ver este nivel de detalle."))
+
     except Exception as e: st.error(f"Error Detalle RT5: {e}")
     gc.collect()
 
@@ -644,7 +655,7 @@ elif seleccion_menu == name_verbund:
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 6: EVOLUCIÓN INGRESOS (Con Filtro Estricto de UPs activas)
+# SECCIÓN 6: EVOLUCIÓN INGRESOS
 # ==============================================================================
 elif seleccion_menu == name_evo:
     st.markdown(f'<div class="section-title">{t("Revenue Evolution by Market Agent and Technology", "Evolución Ingresos por Representante y Tecnología")}</div>', unsafe_allow_html=True)
