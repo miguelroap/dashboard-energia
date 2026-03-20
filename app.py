@@ -5,6 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter
+import glob
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="📊")
 
@@ -51,57 +52,78 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-# --- CARGA DE DATOS EXTREMA (PARA EVITAR EL COLAPSO DE RAM) ---
+# --- BOTÓN DE LIMPIEZA DE CACHÉ ---
+if st.sidebar.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recargar Datos")):
+    st.cache_data.clear()
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# ==============================================================================
+# LÓGICA DE CARGA BAJO DEMANDA (LAZY LOADING)
+# ==============================================================================
+# 1. Buscamos qué meses has subido a GitHub leyendo los nombres de archivo
+archivos_disponibles = glob.glob('allh_*_part*.parquet')
+# Extraemos la parte del mes (ej: de 'allh_012025_part1.parquet' sacamos '012025')
+meses_disponibles = sorted(list(set([f.split('_')[1] for f in archivos_disponibles if len(f.split('_')) > 1])))
+
+if not meses_disponibles:
+    st.error(t("No data files found in the repository.", "No se han encontrado archivos de datos en el repositorio. Sube los archivos .parquet con el formato 'allh_MMYYYY_part1.parquet'."))
+    st.stop()
+
+st.sidebar.header(t("📂 Data Loader", "📂 Carga de Datos en Memoria"))
+meses_formateados = {m: f"{m[:2]}/{m[2:]}" for m in meses_disponibles}
+
+# 2. El usuario elige qué meses meter en la RAM (Por defecto solo carga el último mes)
+selected_months = st.sidebar.multiselect(
+    t("Select months to load:", "Selecciona los meses a cargar:"),
+    options=meses_disponibles,
+    format_func=lambda x: meses_formateados[x],
+    default=[meses_disponibles[-1]]
+)
+
+if not selected_months:
+    st.warning(t("Please select at least one month.", "Por favor, selecciona al menos un mes para analizar."))
+    st.stop()
+
+# 3. Función que carga EXCLUSIVAMENTE los meses seleccionados
 @st.cache_data
-def load_allh_data():
-    import glob
+def load_allh_data(meses_a_cargar):
     import pyarrow.dataset as ds
     import pyarrow.parquet as pq
-    import pandas as pd
     import gc
-    
     try:
-        # 1. Busca automáticamente TODOS los archivos parquet de la carpeta de golpe
-        # Ya no hace falta ni escribir los meses, si subes uno nuevo, lo detecta solo.
-        archivos = glob.glob('allh_*part*.parquet')
-        
-        if not archivos:
-            st.error(t("No data files found.", "No se han encontrado archivos de datos."))
-            return pd.DataFrame()
+        archivos_a_leer = []
+        for m in meses_a_cargar:
+            archivos_a_leer.extend(glob.glob(f'allh_{m}_part*.parquet'))
             
+        if not archivos_a_leer:
+            return pd.DataFrame()
+
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
                        'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i',
                        'Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 
                        'Profit_se', 'Profit_i', 'Rev_tr', 'Profit_p48']
-                       
-        # 2. Leemos la cabecera del primer archivo para ver qué columnas hay
-        schema = pq.read_schema(archivos[0])
+        
+        schema = pq.read_schema(archivos_a_leer[0])
         cols_to_load = [c for c in cols_needed if c in schema.names]
         
-        # 3. LA MAGIA: En lugar de leer 12 archivos y juntarlos (que duplica la RAM),
-        # creamos un "Dataset virtual" que los lee todos de golpe desde C++
-        dataset = ds.dataset(archivos, format="parquet")
-        
-        # 4. Lo pasamos a Pandas de una sola vez
+        dataset = ds.dataset(archivos_a_leer, format="parquet")
         df = dataset.to_table(columns=cols_to_load).to_pandas()
         
-        # 5. Comprimimos los datos en memoria inmediatamente
-        # Pasar de 64 bits a 32 bits reduce el peso de los números a la mitad
+        # Optimización de memoria
         for col in df.select_dtypes(include=['float64']).columns:
             df[col] = df[col].astype('float32')
-            
-        # Convertir los textos en 'categorías' reduce su peso hasta un 90%
         for col in ['UP', 'MA', 'Tech']:
             if col in df.columns:
                 df[col] = df[col].astype('category')
                 
-        gc.collect() # Vaciamos la basura de la RAM forzosamente
+        gc.collect()
         return df
-        
     except Exception as e:
-        st.error(f"{t('Critical error:', 'Error crítico en la carga unificada:')} {e}")
+        st.error(f"{t('Critical error loading parquet files:', 'Error crítico cargando archivos parquet:')} {e}")
         return pd.DataFrame()
-        
+
 @st.cache_data
 def load_power_data():
     try:
@@ -111,16 +133,16 @@ def load_power_data():
     except Exception:
         return pd.DataFrame(columns=['UP', 'Power MW'])
 
-allh_full = load_allh_data()
+# Ejecutar carga
+allh_full = load_allh_data(selected_months)
 df_power = load_power_data()
 
 if allh_full.empty:
-    st.error(t("Could not load base data. Check Parquet files.", "No se han podido cargar los datos base. Verifica los archivos Parquet."))
+    st.error(t("Loaded data is empty.", "Los datos cargados están vacíos."))
     st.stop()
 
 allh_full['Day'] = pd.to_datetime(allh_full['Day'])
 
-# BLINDAJE CONTRA COLUMNAS FALTANTES
 cols_to_ensure = ['Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i',
                   'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i', 'Profit_p48', 'Energy_p48', 'PBF', 'Energy_RT1', 'Rev_tr']
 for col in cols_to_ensure:
@@ -130,12 +152,17 @@ for col in cols_to_ensure:
         allh_full[col] = pd.to_numeric(allh_full[col], errors='coerce').fillna(0)
 
 # --- FILTRO DE FECHAS (GLOBAL) ---
+st.sidebar.markdown("---")
 st.sidebar.header(t("📅 Date Range (Global)", "📅 Rango de Fechas (Global)"))
 min_date, max_date = allh_full['Day'].min().date(), allh_full['Day'].max().date()
 selected_dates = st.sidebar.date_input(t("Select period:", "Selecciona periodo:"), value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date, max_date)
 allh = allh_full[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)].copy()
+
+# ==============================================================================
+# PESTAÑAS (NO TOCAR DE AQUÍ PARA ABAJO)
+# ==============================================================================
 
 # --- PESTAÑAS ---
 tab_names = [
