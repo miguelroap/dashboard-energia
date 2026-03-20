@@ -51,19 +51,20 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-# --- CARGA DE DATOS OPTIMIZADA (HISTÓRICO 2025) ---
+# --- CARGA DE DATOS SÚPER-OPTIMIZADA PARA AHORRAR RAM ---
 @st.cache_data
 def load_allh_data():
     import os
+    import gc
+    import pyarrow.parquet as pq
+    
     try:
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
                        'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i',
                        'Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 
                        'Profit_se', 'Profit_i', 'Rev_tr', 'Profit_p48']
         
-        import pyarrow.parquet as pq
-        
-        # Generamos la lista de meses: desde '012025' hasta '122025' (todo el año)
+        # Generamos la lista de meses: desde '012025' hasta '122025'
         meses = [f"{str(m).zfill(2)}2025" for m in range(1, 13)]
         df_list = []
         
@@ -71,23 +72,44 @@ def load_allh_data():
             for part in ['part1', 'part2']:
                 filename = f'allh_{mes}_{part}.parquet'
                 
-                # Comprobamos físicamente si el archivo existe en GitHub
                 if os.path.exists(filename):
                     try:
                         schema = pq.read_schema(filename)
                         cols_to_load = [c for c in cols_needed if c in schema.names]
                         
+                        # Leer el fragmento del mes
                         df_temp = pd.read_parquet(filename, columns=cols_to_load)
+                        
+                        # --- TRUCO DE OPTIMIZACIÓN DE MEMORIA #1 ---
+                        # Forzar números de 64-bit a 32-bit (Ahorra un 50% de RAM al instante)
+                        for col in df_temp.select_dtypes(include=['float64']).columns:
+                            df_temp[col] = df_temp[col].astype('float32')
+                        for col in df_temp.select_dtypes(include=['int64']).columns:
+                            df_temp[col] = pd.to_numeric(df_temp[col], downcast='integer')
+                            
                         df_list.append(df_temp)
                     except Exception as e:
-                        # Si el archivo existe pero está roto, nos avisa en pantalla
-                        st.warning(f"⚠️ El archivo {filename} existe, pero está corrupto o dio error: {e}")
+                        st.warning(f"⚠️ El archivo {filename} dio un error al leerse: {e}")
 
         if not df_list:
-            st.error(f"❌ No se encontró ningún archivo .parquet de 2025. Comprueba que se llamen exactamente 'allh_012025_part1.parquet'.")
+            st.error(t("No .parquet files found for 2025.", "No se encontró ningún archivo .parquet de 2025."))
             return pd.DataFrame()
             
-        return pd.concat(df_list, ignore_index=True)
+        # Unir todos los meses en una sola macro-tabla
+        df_final = pd.concat(df_list, ignore_index=True)
+        
+        # Borrar la lista temporal y vaciar la basura de la memoria RAM forzosamente
+        del df_list
+        gc.collect()
+        
+        # --- TRUCO DE OPTIMIZACIÓN DE MEMORIA #2 ---
+        # Convertir los textos repetitivos en 'categorías'. 
+        # (Ahorra hasta un 90% de RAM en columnas de texto como MA o UP)
+        for col in ['UP', 'MA', 'Tech']:
+            if col in df_final.columns:
+                df_final[col] = df_final[col].astype('category')
+                
+        return df_final
         
     except Exception as e:
         st.error(f"{t('Critical error loading parquet files:', 'Error crítico cargando archivos parquet:')} {e}")
