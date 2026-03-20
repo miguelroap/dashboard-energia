@@ -61,30 +61,18 @@ if st.sidebar.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recarg
 st.sidebar.markdown("---")
 
 # ==============================================================================
-# CARGA DE DATOS DINÁMICA (LAZY LOADING)
+# CARGA DE DATOS FIJADA EXCLUSIVAMENTE A ENERO Y FEBRERO
 # ==============================================================================
-archivos_disponibles = glob.glob('allh_*_part*.parquet')
-meses_brutos = set()
-
-for f in archivos_disponibles:
-    partes = f.split('_')
-    if len(partes) >= 2 and len(partes[1]) == 6:
-        meses_brutos.add(partes[1])
-
-meses_disponibles = sorted(list(meses_brutos), key=lambda x: (x[2:], x[:2]))
-
-if not meses_disponibles:
-    st.error(t("No data files found in the repository. Please upload 'allh_MMYYYY_part1.parquet'.", "No se han encontrado archivos en el repositorio. Asegúrate de subirlos con el formato 'allh_MMYYYY_part1.parquet'."))
-    st.stop()
+meses_disponibles = ['012025', '022025']
 
 st.sidebar.header(t("📂 Data Loader", "📂 Carga de Datos (RAM)"))
-meses_formateados = {m: f"{m[:2]}/{m[2:]}" for m in meses_disponibles}
+meses_formateados = {'012025': '01/2025', '022025': '02/2025'}
 
 selected_months = st.sidebar.multiselect(
     t("Select months to load:", "Selecciona los meses a cargar:"),
     options=meses_disponibles,
     format_func=lambda x: meses_formateados.get(x, x),
-    default=[meses_disponibles[-1]]
+    default=meses_disponibles
 )
 
 if not selected_months:
@@ -104,6 +92,7 @@ def load_allh_data(meses_a_cargar):
                     archivos_a_leer.append(archivo)
             
         if not archivos_a_leer:
+            st.error(t("File not found in GitHub. Please upload it.", "Archivos no encontrados en GitHub. Asegúrate de subirlos."))
             return pd.DataFrame()
 
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
@@ -147,6 +136,7 @@ if allh_full.empty:
     st.error(t("Loaded data is empty.", "Los datos cargados están vacíos."))
     st.stop()
 
+# Forzar conversión ligera sin copias adicionales
 allh_full['Day'] = pd.to_datetime(allh_full['Day'])
 
 cols_to_ensure = ['Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i',
@@ -157,6 +147,8 @@ for col in cols_to_ensure:
     else:
         allh_full[col] = pd.to_numeric(allh_full[col], errors='coerce').fillna(0)
 
+gc.collect() # Limpieza de memoria post-carga
+
 # --- FILTRO DE FECHAS (GLOBAL) ---
 st.sidebar.markdown("---")
 st.sidebar.header(t("📅 Date Range (Global)", "📅 Rango de Fechas (Global)"))
@@ -164,7 +156,10 @@ min_date, max_date = allh_full['Day'].min().date(), allh_full['Day'].max().date(
 selected_dates = st.sidebar.date_input(t("Select period:", "Selecciona periodo:"), value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date, max_date)
-allh = allh_full[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)].copy()
+
+# Usamos .loc para no duplicar datos en RAM
+allh = allh_full.loc[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)]
+gc.collect()
 
 # ==============================================================================
 # MENÚ DE NAVEGACIÓN
@@ -180,9 +175,7 @@ menu_options = [
     t("💶 Verbund Profit", "💶 Beneficio Verbund"),
     t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 ]
-
-# FIX 1: Etiqueta oculta en lugar de vacía para accesibilidad
-seleccion_menu = st.sidebar.radio("Menú", menu_options, label_visibility="collapsed")
+seleccion_menu = st.sidebar.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
 # SECCIÓN 1: RESUMEN PRINCIPAL
@@ -204,16 +197,16 @@ if seleccion_menu == menu_options[0]:
     active_ups = allh[mask_active]['UP'].unique()
     
     excluded_MAs = ["ENDESA", "IBERDROLA", "EDP", "NATURGY", "HOLALUZ", "ALDROENERGIA Y SOLUCIONES SL"]
-    allh_main = allh[(allh['UP'].isin(active_ups)) & (~allh['MA'].isin(excluded_MAs))].copy()
+    # Filtramos usando .loc para evitar copias pesadas
+    allh_main = allh.loc[(allh['UP'].isin(active_ups)) & (~allh['MA'].isin(excluded_MAs))]
     
     if aass_sel == 'no_sec': cols_sel = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr']
     elif aass_sel == 'sec': cols_sel = ['Profit_b', 'Profit_se']
     else: cols_sel = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']
     
-    allh_main['Total_Profit'] = allh_main[cols_sel].sum(axis=1)
-    allh_main['Month'] = allh_main['Day'].dt.to_period('M')
+    # Usamos .assign para evitar warnings de SettingWithCopy
+    allh_main = allh_main.assign(Total_Profit=allh_main[cols_sel].sum(axis=1), Month=allh_main['Day'].dt.to_period('M'))
 
-    # FIX 2: observed=True para variables categóricas
     monthly = allh_main.groupby(['UP', 'Tech', 'MA', 'Month'], observed=True).agg(
         Monthly_Profit=('Total_Profit', 'sum'),
         Monthly_Energy=('Energy_p48', 'sum')
@@ -250,6 +243,8 @@ if seleccion_menu == menu_options[0]:
             ax.set_title('WIND: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
             st.pyplot(fig); plt.close(fig)
 
+    gc.collect()
+
 # ==============================================================================
 # SECCIÓN 2: ANÁLISIS MRA
 # ==============================================================================
@@ -267,7 +262,7 @@ elif seleccion_menu == menu_options[1]:
         sel_tech = st.selectbox(t("2. Technology", "2. Tecnología"), tech_opts, index=tech_opts.index('Wind') if 'Wind' in tech_opts else 0)
         
     with f_up:
-        up_rt5 = allh[(allh['MA']==sel_ma) & (allh['Tech']==sel_tech)].copy()
+        up_rt5 = allh.loc[(allh['MA']==sel_ma) & (allh['Tech']==sel_tech)]
         mask_rt5 = (up_rt5['Profit_rt']!=0)|(up_rt5['Profit_b']!=0)|(up_rt5['Profit_t']!=0)|(up_rt5['Profit_rr']!=0)
         up_rt5_qualified = up_rt5[mask_rt5]
         any_up = t('Any UP', 'Cualquier UP')
@@ -277,9 +272,9 @@ elif seleccion_menu == menu_options[1]:
     try:
         if sel_up == any_up:
             up_ids = up_rt5_qualified['UP'].unique().tolist()
-            up_df = allh[allh['UP'].isin(up_ids)].copy()
+            up_df = allh.loc[allh['UP'].isin(up_ids)]
         else:
-            up_df = allh[allh['UP'] == sel_up].copy()
+            up_df = allh.loc[allh['UP'] == sel_up]
             
         if up_df.empty:
             st.warning(t("No data available for the selected combination.", "No hay datos disponibles para la combinación seleccionada."))
@@ -292,8 +287,8 @@ elif seleccion_menu == menu_options[1]:
             if 'Energy_i' not in up_grouped.columns: up_grouped['Energy_i'] = 0.0
             up_grouped['Profit_AASS'] = up_grouped[['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b']].sum(axis=1)
             up_grouped['Energy_AASS'] = up_grouped[['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se']].sum(axis=1)
-            up_grouped['Year_Month'] = up_grouped['Day'].dt.to_period('M').astype(str)
             
+            up_grouped['Year_Month'] = up_grouped['Day'].dt.to_period('M').astype(str)
             up_m = up_grouped.groupby(['Year_Month'], observed=True)[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum(numeric_only=True).reset_index()
             
             up_m['% p48/PBF'] = up_m['Energy_p48'] / up_m['PBF'].replace(0, np.nan)
@@ -306,9 +301,10 @@ elif seleccion_menu == menu_options[1]:
             df_table_mra.columns = ['% p48/PBF', '% RT1/PBF', 'Real Time €', 'AASS €', 'Intras €', 'Intras €/MWh', 'AASS €/MWh']
             
             st.markdown(f"##### {t('Monthly Metrics Summary (MRA)', 'Resumen Métricas Mensuales (MRA)')}")
+            # FIX: width='stretch' reemplaza use_container_width
             st.dataframe(df_table_mra.style.format({
                 '% p48/PBF': '{:.1%}', '% RT1/PBF': '{:.1%}', 'Real Time €': '{:,.2f}', 'AASS €': '{:,.2f}', 'Intras €': '{:,.2f}', 'Intras €/MWh': '{:.2f}', 'AASS €/MWh': '{:.2f}'
-            }), use_container_width=True)
+            }), width='stretch')
 
             col_m1, col_m2 = st.columns(2)
             with col_m1:
@@ -366,6 +362,7 @@ elif seleccion_menu == menu_options[1]:
 
     except Exception as e:
         st.error(f"{t('Error processing MRA:', 'Error procesando MRA:')} {e}")
+    gc.collect()
 
 # ==============================================================================
 # SECCIÓN 3: DETALLE RT5
@@ -373,7 +370,8 @@ elif seleccion_menu == menu_options[1]:
 elif seleccion_menu == menu_options[2]:
     st.markdown(f'<div class="section-title">{t("RT5 Detail: Prices & Offers", "Detalle RT5: Precios y Ofertas")}</div>', unsafe_allow_html=True)
     try:
-        filtered_rt5 = allh[(allh['Tech'].isin(['Solar PV', 'Wind'])) & (allh['Profit_tr_s'] != 0)].copy()
+        # Usar .loc reduce RAM y el SettingWithCopy Warning
+        filtered_rt5 = allh.loc[(allh['Tech'].isin(['Solar PV', 'Wind'])) & (allh['Profit_tr_s'] != 0)].copy()
         filtered_rt5['Price_RT5'] = filtered_rt5['Rev_tr'] / filtered_rt5['Energy_tr'].replace(0, np.nan)
         filtered_rt5.dropna(subset=['Price_RT5'], inplace=True)
         
@@ -391,14 +389,15 @@ elif seleccion_menu == menu_options[2]:
                 min_bid_ma = filtered_rt5.groupby('MA', observed=True)['Price_RT5'].min()
                 
                 res_ma = pd.DataFrame({'Total Profit RT5': total_p_ma, '€/MWh_resource': eur_mwh_r_ma, 'Weighted Avg Bid': w_avg_bid_ma, 'Max Bid': max_bid_ma, 'Min Bid': min_bid_ma})
-                filtered_res_ma = res_ma[res_ma['Min Bid'] < -50]
+                filtered_res_ma = res_ma.dropna(subset=['Min Bid'])
+                filtered_res_ma = filtered_res_ma[filtered_res_ma['Min Bid'] < -50]
                 
                 if filtered_res_ma.empty: st.info(t("No MA has matched offers < -50€.", "Ningún MA tiene ofertas casadas con precio < -50€."))
-                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
+                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
 
             with col_rt_a2:
                 st.markdown(f"**{t('Specific Installations (FCTRAV2, PEVER)', 'Instalaciones Específicas (FCTRAV2, PEVER)')}**")
-                up_rt5_v = filtered_rt5[filtered_rt5['UP'].isin(['FCTRAV2', 'PEVER'])].copy()
+                up_rt5_v = filtered_rt5.loc[filtered_rt5['UP'].isin(['FCTRAV2', 'PEVER'])]
                 if up_rt5_v.empty: st.info(t("No data for FCTRAV2 or PEVER.", "Sin datos para FCTRAV2 o PEVER."))
                 else:
                     total_p_v = up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum()
@@ -406,14 +405,14 @@ elif seleccion_menu == menu_options[2]:
                     eur_mwh_r_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     res_v = pd.DataFrame({'Total Profit RT5': total_p_v, '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, 'Max Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()})
-                    res_v = res_v.dropna(subset=['Min Bid']) # Clean up empty categories
-                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
+                    res_v = res_v.dropna(subset=['Min Bid'])
+                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
 
             if not filtered_res_ma.empty:
                 st.markdown("---")
                 col_rt_b1, col_rt_b2 = st.columns(2)
                 mas_to_plot_list = [m for m in filtered_res_ma.index if m != 'ESTABANELL Y PAHISA MERCATOR']
-                df_graph = filtered_rt5[filtered_rt5['MA'].isin(mas_to_plot_list)].copy()
+                df_graph = filtered_rt5.loc[filtered_rt5['MA'].isin(mas_to_plot_list)]
                 
                 with col_rt_b1:
                     fig_s, ax_s = plt.subplots(figsize=(8, 5))
@@ -427,6 +426,7 @@ elif seleccion_menu == menu_options[2]:
 
     except Exception as e:
         st.error(f"{t('Error processing RT5 Detail:', 'Error procesando pestaña Detalle RT5:')} {e}")
+    gc.collect()
 
 # ==============================================================================
 # SECCIÓN 4: ANÁLISIS GNERA
@@ -439,7 +439,7 @@ elif seleccion_menu == menu_options[3]:
         PROFIT_MAP = {'Profit_rt': 'RRTT F2', 'Profit_tr': 'RT5', 'Profit_tr_s': 'RT5_strategy', 
                       'Profit_t': 'Tertiary', 'Profit_rr': 'RR', 'Profit_b': 'Sec. Band', 'Profit_se': 'Sec. Activation'}
         
-        gnwi = allh[(allh['MA'] == 'GNERA') & (allh['Tech'] == 'Wind') & (allh['UP'].isin(UPS_INTERES))].copy()
+        gnwi = allh.loc[(allh['MA'] == 'GNERA') & (allh['Tech'] == 'Wind') & (allh['UP'].isin(UPS_INTERES))].copy()
         
         if gnwi.empty: st.info(t("No data for GNERA Wind.", "No hay datos de GNERA Wind para las instalaciones seleccionadas."))
         else:
@@ -454,7 +454,6 @@ elif seleccion_menu == menu_options[3]:
             for col in cols_to_normalize:
                 df_agg_gnera[f'{col}'] = df_agg_gnera[col] / df_agg_gnera['Potencia_MW']
             
-            # HEATMAP
             df_heatmap = df_agg_gnera.set_index('UP').drop(columns=['Potencia_MW'])
             df_heatmap_components = df_heatmap.drop(columns=['Profit_Total_Extra'], errors='ignore')
             df_heatmap_total = df_heatmap[['Profit_Total_Extra']] if 'Profit_Total_Extra' in df_heatmap.columns else pd.DataFrame()
@@ -469,7 +468,6 @@ elif seleccion_menu == menu_options[3]:
                 ax_total.set_yticks([])
             st.pyplot(fig_hm); plt.close(fig_hm)
 
-            # GRÁFICOS EVOLUCIÓN
             st.markdown("---")
             st.markdown(f"##### {t('Daily Profit Evolution (€/MW)', 'Evolución Diaria del Profit (€/MW)')}")
             gnwi['Profit_Total_eur_per_MW'] = gnwi['Profit_Total_Extra'] / gnwi['Potencia_MW']
@@ -478,7 +476,6 @@ elif seleccion_menu == menu_options[3]:
             sns.lineplot(data=df_hourly_norm, x='hour', y='Profit_Total_eur_per_MW', hue='UP', marker='o', ax=ax_evo)
             ax_evo.set_xticks(range(0, 24)); ax_evo.grid(True, alpha=0.3); st.pyplot(fig_evo); plt.close(fig_evo)
 
-            # 4x ÁREAS APILADAS POR UP
             st.markdown("---")
             st.markdown(f"##### {t('Stacked Profit Areas per UP (€/MW)', 'Áreas Apiladas de Profit por Instalación (€/MW)')}")
             for col in [c for c in profit_cols_to_sum if c in gnwi.columns]:
@@ -504,7 +501,6 @@ elif seleccion_menu == menu_options[3]:
             fig_st.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=min(4, len(labels)), fontsize=12)
             st.pyplot(fig_st); plt.close(fig_st)
 
-            # 4x PBF vs Energy_p48
             st.markdown("---")
             st.markdown(f"##### {t('PBF vs Energy_p48 (% Max PBF)', 'PBF vs Energy_p48 (% del Máximo PBF)')}")
             df_hourly_energy = gnwi.groupby(['UP', 'hour'], observed=True)[['PBF', 'Energy_p48']].sum(numeric_only=True).reset_index()
@@ -529,7 +525,6 @@ elif seleccion_menu == menu_options[3]:
                 ax.grid(True, alpha=0.3); ax.set_xticks(range(0, 24))
             st.pyplot(fig_en); plt.close(fig_en)
             
-            # GNERA AGREGADO
             st.markdown("---")
             st.markdown(f"##### {t('Aggregated GNERA Stacked Areas', 'GNERA Agregado - Áreas Apiladas Profit (€/MW)')}")
             df_gnera_hourly = gnwi.groupby('hour')[[c for c in profit_cols_to_sum if c in gnwi.columns]].sum(numeric_only=True).reset_index()
@@ -547,6 +542,7 @@ elif seleccion_menu == menu_options[3]:
 
     except Exception as e:
         st.error(f"{t('Error in Gnera Analysis:', 'Error en Análisis Gnera:')} {e}")
+    gc.collect()
 
 # ==============================================================================
 # SECCIÓN 5: BENEFICIO VERBUND
@@ -564,7 +560,7 @@ elif seleccion_menu == menu_options[4]:
             'EFGNRA': ['Bodenaya + Pico + Others', 0.0, 0.0]
         }
         profit_cols_v = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i']
-        df_v = allh[allh['UP'].isin(INPUT_DATA.keys())].copy()
+        df_v = allh.loc[allh['UP'].isin(INPUT_DATA.keys())]
         
         df_agg_v = df_v.groupby('UP', observed=True)[[c for c in profit_cols_v if c in df_v.columns]].sum(numeric_only=True).reindex(list(INPUT_DATA.keys())).reset_index().fillna(0)
         df_agg_v['Total Profit'] = df_agg_v.iloc[:, 1:].sum(axis=1)
@@ -582,10 +578,11 @@ elif seleccion_menu == menu_options[4]:
         df_final_v.insert(1, 'Installation', [val[0] for val in INPUT_DATA.values()] + ['Total'])
         
         cols_to_show = ['UP', 'Installation'] + [c for c in profit_cols_v if c in df_final_v.columns] + ['Total Profit', 'Profit Verbund', 'Profit Verbund / MW']
-        st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), use_container_width=True)
+        st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), width='stretch')
         
     except Exception as e:
         st.warning(f"{t('Error processing Verbund table:', 'Error procesando tabla Verbund:')} {e}")
+    gc.collect()
 
 # ==============================================================================
 # SECCIÓN 6: EVOLUCIÓN INGRESOS
@@ -597,7 +594,7 @@ elif seleccion_menu == menu_options[5]:
         with col_e1: ma_input = st.selectbox(t("Market Agent (MA):", "Representante (MA):"), sorted(allh['MA'].unique()), index=list(sorted(allh['MA'].unique())).index('GALP') if 'GALP' in allh['MA'].unique() else 0)
         with col_e2: tech_input = st.selectbox(t("Technology (Tech):", "Tecnología (Tech):"), sorted(allh['Tech'].unique()), index=list(sorted(allh['Tech'].unique())).index('Wind') if 'Wind' in allh['Tech'].unique() else 0)
         
-        df_evo = allh[(allh['MA'] == ma_input) & (allh['Tech'] == tech_input)].copy()
+        df_evo = allh.loc[(allh['MA'] == ma_input) & (allh['Tech'] == tech_input)].copy()
         
         if df_evo.empty:
             st.info(t("No data for this combination.", "No hay datos para esta combinación."))
@@ -625,3 +622,4 @@ elif seleccion_menu == menu_options[5]:
             
     except Exception as e:
         st.warning(f"{t('Error processing evolution charts:', 'Error procesando gráficos de evolución:')} {e}")
+    gc.collect()
