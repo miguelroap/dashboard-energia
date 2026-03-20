@@ -472,7 +472,7 @@ elif seleccion_menu == name_mra:
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 3: DETALLE RT5
+# SECCIÓN 3: DETALLE RT5 (Funciona en Diario y Horario)
 # ==============================================================================
 elif seleccion_menu == name_rt5:
     st.markdown(f'<div class="section-title">{t("RT5 Detail: Prices & Offers", "Detalle RT5: Precios y Ofertas")}</div>', unsafe_allow_html=True)
@@ -500,6 +500,7 @@ elif seleccion_menu == name_rt5:
                 if is_hourly:
                     filtered_res_ma = filtered_res_ma[filtered_res_ma[min_name] < -50]
                 
+                # Ordenar de mayor a menor por Total Profit
                 filtered_res_ma = filtered_res_ma.sort_values(by='Total Profit RT5', ascending=False)
                     
                 if filtered_res_ma.empty: st.info(t("No matches.", "Sin ofertas en este rango."))
@@ -515,7 +516,9 @@ elif seleccion_menu == name_rt5:
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, max_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), min_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=[min_name])
                     
+                    # Ordenar de mayor a menor también aquí
                     res_v = res_v.sort_values(by='Total Profit RT5', ascending=False)
+                    
                     st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', max_name: '{:.2f}', min_name: '{:.2f}'}), width='stretch')
 
             # --- NUEVOS GRÁFICOS: TOP 10 MA POR TECNOLOGÍA ---
@@ -533,12 +536,16 @@ elif seleccion_menu == name_rt5:
                 
                 ma_profit = df_t.groupby('MA', observed=True)['Profit_tr_s'].sum().reset_index()
                 top10 = ma_profit.nlargest(10, 'Profit_tr_s')
-                top10 = top10[top10['Profit_tr_s'] > 0] 
+                top10 = top10[top10['Profit_tr_s'] > 0].copy()
                 
                 if top10.empty:
                     ax.text(0.5, 0.5, t("No data", "Sin datos"), ha='center', va='center')
                     ax.axis('off')
                     return
+                
+                # --- LA CORRECCIÓN CLAVE ---
+                # Forzamos a string para que Seaborn olvide las categorías vacías
+                top10['MA'] = top10['MA'].astype(str)
                 
                 sns.barplot(data=top10, x='MA', y='Profit_tr_s', palette=color_palette, ax=ax)
                 ax.set_title(f"{tech}", fontsize=12)
