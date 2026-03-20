@@ -5,6 +5,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter
+import glob
+import gc
+import os
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="📊")
 
@@ -51,22 +54,81 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-# --- CARGA DE DATOS OPTIMIZADA ---
+if st.sidebar.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recargar Datos")):
+    st.cache_data.clear()
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# ==============================================================================
+# CARGA DE DATOS DINÁMICA (LAZY LOADING Y ORDENACIÓN CRONOLÓGICA)
+# ==============================================================================
+# 1. Escanear la carpeta en busca de los archivos .parquet
+archivos_disponibles = glob.glob('allh_*_part*.parquet')
+meses_brutos = set()
+
+for f in archivos_disponibles:
+    partes = f.split('_')
+    # Nos aseguramos de extraer la etiqueta del mes (ej: '012025')
+    if len(partes) >= 2 and len(partes[1]) == 6:
+        meses_brutos.add(partes[1])
+
+# 2. Ordenar cronológicamente (primero los últimos 4 dígitos YYYY, luego los 2 primeros MM)
+meses_disponibles = sorted(list(meses_brutos), key=lambda x: (x[2:], x[:2]))
+
+if not meses_disponibles:
+    st.error(t("No data files found in the repository. Please upload 'allh_MMYYYY_part1.parquet'.", "No se han encontrado archivos en el repositorio. Asegúrate de subirlos con el formato 'allh_MMYYYY_part1.parquet'."))
+    st.stop()
+
+st.sidebar.header(t("📂 Data Loader", "📂 Carga de Datos (RAM)"))
+meses_formateados = {m: f"{m[:2]}/{m[2:]}" for m in meses_disponibles}
+
+# 3. Multiselect cargando SOLO EL ÚLTIMO MES por defecto
+selected_months = st.sidebar.multiselect(
+    t("Select months to load:", "Selecciona los meses a cargar:"),
+    options=meses_disponibles,
+    format_func=lambda x: meses_formateados.get(x, x),
+    default=[meses_disponibles[-1]]  # <- LA CLAVE: Carga únicamente el último elemento de la lista
+)
+
+if not selected_months:
+    st.warning(t("Please select at least one month.", "Por favor, selecciona al menos un mes para analizar."))
+    st.stop()
+
 @st.cache_data
-def load_allh_data():
+def load_allh_data(meses_a_cargar):
+    import pyarrow.dataset as ds
+    import pyarrow.parquet as pq
     try:
+        archivos_a_leer = []
+        for m in meses_a_cargar:
+            for part in ['part1', 'part2']:
+                archivo = f'allh_{m}_{part}.parquet'
+                if os.path.exists(archivo):
+                    archivos_a_leer.append(archivo)
+            
+        if not archivos_a_leer:
+            return pd.DataFrame()
+
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
                        'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i',
                        'Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 
                        'Profit_se', 'Profit_i', 'Rev_tr', 'Profit_p48']
         
-        import pyarrow.parquet as pq
-        schema = pq.read_schema('allh_part1.parquet')
+        schema = pq.read_schema(archivos_a_leer[0])
         cols_to_load = [c for c in cols_needed if c in schema.names]
         
-        df1 = pd.read_parquet('allh_part1.parquet', columns=cols_to_load)
-        df2 = pd.read_parquet('allh_part2.parquet', columns=cols_to_load)
-        return pd.concat([df1, df2], ignore_index=True)
+        dataset = ds.dataset(archivos_a_leer, format="parquet")
+        df = dataset.to_table(columns=cols_to_load).to_pandas()
+        
+        for col in df.select_dtypes(include=['float64']).columns:
+            df[col] = df[col].astype('float32')
+        for col in ['UP', 'MA', 'Tech']:
+            if col in df.columns:
+                df[col] = df[col].astype('category')
+                
+        gc.collect()
+        return df
     except Exception as e:
         st.error(f"{t('Critical error loading parquet files:', 'Error crítico cargando archivos parquet:')} {e}")
         return pd.DataFrame()
@@ -74,22 +136,23 @@ def load_allh_data():
 @st.cache_data
 def load_power_data():
     try:
-        df = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
-        df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce')
-        return df.dropna(subset=['Power MW', 'UP'])
+        if os.path.exists('ups_dashboard.parquet'):
+            df = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
+            df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce')
+            return df.dropna(subset=['Power MW', 'UP'])
+        return pd.DataFrame(columns=['UP', 'Power MW'])
     except Exception:
         return pd.DataFrame(columns=['UP', 'Power MW'])
 
-allh_full = load_allh_data()
+allh_full = load_allh_data(selected_months)
 df_power = load_power_data()
 
 if allh_full.empty:
-    st.error(t("Could not load base data. Check Parquet files.", "No se han podido cargar los datos base. Verifica los archivos Parquet."))
+    st.error(t("Loaded data is empty.", "Los datos cargados están vacíos."))
     st.stop()
 
 allh_full['Day'] = pd.to_datetime(allh_full['Day'])
 
-# BLINDAJE CONTRA COLUMNAS FALTANTES
 cols_to_ensure = ['Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i',
                   'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i', 'Profit_p48', 'Energy_p48', 'PBF', 'Energy_RT1', 'Rev_tr']
 for col in cols_to_ensure:
@@ -108,7 +171,7 @@ start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date
 allh = allh_full[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)].copy()
 
 # ==============================================================================
-# NAVEGACIÓN MULTIPÁGINA (SUSTITUYE A ST.TABS PARA AHORRAR RAM)
+# MENÚ DE NAVEGACIÓN (MULTIPLEXING)
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
@@ -173,7 +236,8 @@ if seleccion_menu == menu_options[0]:
             if not s_data[s_data['is_Highlighted']].empty:
                 sns.stripplot(data=s_data[s_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('SOLAR PV: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
-            st.pyplot(fig); plt.close(fig)
+            st.pyplot(fig)
+            plt.close(fig) 
         else:
             st.info(t("No data for Solar PV.", "Sin datos de Solar PV."))
             
@@ -186,7 +250,8 @@ if seleccion_menu == menu_options[0]:
             if not w_data[w_data['is_Highlighted']].empty:
                 sns.stripplot(data=w_data[w_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('WIND: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
-            st.pyplot(fig); plt.close(fig)
+            st.pyplot(fig)
+            plt.close(fig)
 
 # ==============================================================================
 # SECCIÓN 2: ANÁLISIS MRA
@@ -225,7 +290,6 @@ elif seleccion_menu == menu_options[1]:
             cols_to_groupby = ['Tech','MA','Day','hour']
             cols_sum = ['PBF','Energy_p48','Energy_RT1','Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b','Profit_tr','Profit_i','Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr','Profit_p48','Rev_tr']
             
-            # Se usa numeric_only para evitar errores con Day
             up_grouped = up_df.groupby(cols_to_groupby)[cols_sum].sum(numeric_only=True).reset_index()
             
             if 'Energy_i' not in up_grouped.columns: up_grouped['Energy_i'] = 0.0
@@ -233,6 +297,7 @@ elif seleccion_menu == menu_options[1]:
             up_grouped['Energy_AASS'] = up_grouped[['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se']].sum(axis=1)
             
             up_grouped['Year_Month'] = up_grouped['Day'].dt.to_period('M').astype(str)
+            
             up_m = up_grouped.groupby(['Year_Month'])[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum(numeric_only=True).reset_index()
             
             up_m['% p48/PBF'] = up_m['Energy_p48'] / up_m['PBF'].replace(0, np.nan)
@@ -288,7 +353,8 @@ elif seleccion_menu == menu_options[1]:
 
                         ax_wf.set_xticks(positions); ax_wf.set_xticklabels(labels, rotation=45, ha='right')
                         ax_wf.set_ylabel('€/MWh'); ax_wf.set_title(f"MRA Breakdown: {sel_ma}", fontsize=10)
-                        st.pyplot(fig_wf); plt.close(fig_wf)
+                        st.pyplot(fig_wf)
+                        plt.close(fig_wf)
                     else:
                         st.info(t("Net energy is zero.", "Energía neta es cero."))
 
@@ -303,7 +369,8 @@ elif seleccion_menu == menu_options[1]:
                 sns.lineplot(data=up_hourly_long, x='hour', y='MW', hue='label', marker='o', ax=ax_l, palette='Set2')
                 ax_l.set_xticks(range(0, 24)); ax_l.set_xlabel(t("Hour", "Hora")); ax_l.set_ylabel("MW"); ax_l.grid(True, alpha=0.3)
                 ax_l.legend(title='', fontsize=8); ax_l.set_title(t("Average Hourly Dispatch", "Despacho Horario Medio"), fontsize=10)
-                st.pyplot(fig_l); plt.close(fig_l)
+                st.pyplot(fig_l)
+                plt.close(fig_l)
 
     except Exception as e:
         st.error(f"{t('Error processing MRA:', 'Error procesando MRA:')} {e}")
@@ -362,7 +429,6 @@ elif seleccion_menu == menu_options[2]:
                     
                 with col_rt_b2:
                     fig_b, ax_b = plt.subplots(figsize=(8, 5))
-                    # Eliminamos el argumento edgecolor que causaba problemas
                     sns.boxplot(data=df_graph, x='MA', y='Price_RT5', showfliers=False, palette='vlag', ax=ax_b)
                     ax_b.set_title("Boxplot: Price_RT5 matched by Market Agent", fontsize=10); ax_b.tick_params(axis='x', rotation=90); st.pyplot(fig_b); plt.close(fig_b)
 
@@ -395,6 +461,7 @@ elif seleccion_menu == menu_options[3]:
             for col in cols_to_normalize:
                 df_agg_gnera[f'{col}'] = df_agg_gnera[col] / df_agg_gnera['Potencia_MW']
             
+            # HEATMAP
             df_heatmap = df_agg_gnera.set_index('UP').drop(columns=['Potencia_MW'])
             df_heatmap_components = df_heatmap.drop(columns=['Profit_Total_Extra'], errors='ignore')
             df_heatmap_total = df_heatmap[['Profit_Total_Extra']] if 'Profit_Total_Extra' in df_heatmap.columns else pd.DataFrame()
@@ -409,6 +476,7 @@ elif seleccion_menu == menu_options[3]:
                 ax_total.set_yticks([])
             st.pyplot(fig_hm); plt.close(fig_hm)
 
+            # GRÁFICOS EVOLUCIÓN
             st.markdown("---")
             st.markdown(f"##### {t('Daily Profit Evolution (€/MW)', 'Evolución Diaria del Profit (€/MW)')}")
             gnwi['Profit_Total_eur_per_MW'] = gnwi['Profit_Total_Extra'] / gnwi['Potencia_MW']
@@ -417,6 +485,7 @@ elif seleccion_menu == menu_options[3]:
             sns.lineplot(data=df_hourly_norm, x='hour', y='Profit_Total_eur_per_MW', hue='UP', marker='o', ax=ax_evo)
             ax_evo.set_xticks(range(0, 24)); ax_evo.grid(True, alpha=0.3); st.pyplot(fig_evo); plt.close(fig_evo)
 
+            # 4x ÁREAS APILADAS POR UP
             st.markdown("---")
             st.markdown(f"##### {t('Stacked Profit Areas per UP (€/MW)', 'Áreas Apiladas de Profit por Instalación (€/MW)')}")
             for col in [c for c in profit_cols_to_sum if c in gnwi.columns]:
@@ -442,6 +511,7 @@ elif seleccion_menu == menu_options[3]:
             fig_st.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=min(4, len(labels)), fontsize=12)
             st.pyplot(fig_st); plt.close(fig_st)
 
+            # 4x PBF vs Energy_p48
             st.markdown("---")
             st.markdown(f"##### {t('PBF vs Energy_p48 (% Max PBF)', 'PBF vs Energy_p48 (% del Máximo PBF)')}")
             df_hourly_energy = gnwi.groupby(['UP', 'hour'])[['PBF', 'Energy_p48']].sum(numeric_only=True).reset_index()
@@ -466,6 +536,7 @@ elif seleccion_menu == menu_options[3]:
                 ax.grid(True, alpha=0.3); ax.set_xticks(range(0, 24))
             st.pyplot(fig_en); plt.close(fig_en)
             
+            # GNERA AGREGADO
             st.markdown("---")
             st.markdown(f"##### {t('Aggregated GNERA Stacked Areas', 'GNERA Agregado - Áreas Apiladas Profit (€/MW)')}")
             df_gnera_hourly = gnwi.groupby('hour')[[c for c in profit_cols_to_sum if c in gnwi.columns]].sum(numeric_only=True).reset_index()
