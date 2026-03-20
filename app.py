@@ -61,19 +61,16 @@ if st.sidebar.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recarg
 st.sidebar.markdown("---")
 
 # ==============================================================================
-# CARGA DE DATOS DINÁMICA (LAZY LOADING Y ORDENACIÓN CRONOLÓGICA)
+# CARGA DE DATOS DINÁMICA (LAZY LOADING)
 # ==============================================================================
-# 1. Escanear la carpeta en busca de los archivos .parquet
 archivos_disponibles = glob.glob('allh_*_part*.parquet')
 meses_brutos = set()
 
 for f in archivos_disponibles:
     partes = f.split('_')
-    # Nos aseguramos de extraer la etiqueta del mes (ej: '012025')
     if len(partes) >= 2 and len(partes[1]) == 6:
         meses_brutos.add(partes[1])
 
-# 2. Ordenar cronológicamente (primero los últimos 4 dígitos YYYY, luego los 2 primeros MM)
 meses_disponibles = sorted(list(meses_brutos), key=lambda x: (x[2:], x[:2]))
 
 if not meses_disponibles:
@@ -83,12 +80,11 @@ if not meses_disponibles:
 st.sidebar.header(t("📂 Data Loader", "📂 Carga de Datos (RAM)"))
 meses_formateados = {m: f"{m[:2]}/{m[2:]}" for m in meses_disponibles}
 
-# 3. Multiselect cargando SOLO EL ÚLTIMO MES por defecto
 selected_months = st.sidebar.multiselect(
     t("Select months to load:", "Selecciona los meses a cargar:"),
     options=meses_disponibles,
     format_func=lambda x: meses_formateados.get(x, x),
-    default=[meses_disponibles[-1]]  # <- LA CLAVE: Carga únicamente el último elemento de la lista
+    default=[meses_disponibles[-1]]
 )
 
 if not selected_months:
@@ -171,7 +167,7 @@ start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date
 allh = allh_full[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)].copy()
 
 # ==============================================================================
-# MENÚ DE NAVEGACIÓN (MULTIPLEXING)
+# MENÚ DE NAVEGACIÓN
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
@@ -184,7 +180,9 @@ menu_options = [
     t("💶 Verbund Profit", "💶 Beneficio Verbund"),
     t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 ]
-seleccion_menu = st.sidebar.radio("", menu_options)
+
+# FIX 1: Etiqueta oculta en lugar de vacía para accesibilidad
+seleccion_menu = st.sidebar.radio("Menú", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
 # SECCIÓN 1: RESUMEN PRINCIPAL
@@ -215,7 +213,8 @@ if seleccion_menu == menu_options[0]:
     allh_main['Total_Profit'] = allh_main[cols_sel].sum(axis=1)
     allh_main['Month'] = allh_main['Day'].dt.to_period('M')
 
-    monthly = allh_main.groupby(['UP', 'Tech', 'MA', 'Month']).agg(
+    # FIX 2: observed=True para variables categóricas
+    monthly = allh_main.groupby(['UP', 'Tech', 'MA', 'Month'], observed=True).agg(
         Monthly_Profit=('Total_Profit', 'sum'),
         Monthly_Energy=('Energy_p48', 'sum')
     ).reset_index()
@@ -223,35 +222,33 @@ if seleccion_menu == menu_options[0]:
     monthly = pd.merge(monthly, df_power, on='UP', how='left')
     monthly['Profit_per_MW'] = (monthly['Monthly_Profit'] / monthly['Power MW']).replace([np.inf, -np.inf], 0).fillna(0)
 
-    grouped = monthly.groupby(['UP', 'Tech', 'MA']).agg(Profit_per_MW=('Profit_per_MW', 'mean')).reset_index()
+    grouped = monthly.groupby(['UP', 'Tech', 'MA'], observed=True).agg(Profit_per_MW=('Profit_per_MW', 'mean')).reset_index()
     grouped['is_Highlighted'] = grouped['UP'].isin(selected_ups)
     
     c1, c2 = st.columns(2)
     with c1:
         s_data = grouped[grouped['Tech'] == 'Solar PV']
         if not s_data.empty:
-            order = s_data.groupby('MA')['Profit_per_MW'].mean().sort_values(ascending=False).index
+            order = s_data.groupby('MA', observed=True)['Profit_per_MW'].mean().sort_values(ascending=False).index
             fig, ax = plt.subplots(figsize=(8, 5))
             sns.boxplot(data=s_data, x='MA', y='Profit_per_MW', showfliers=False, color='orange', order=order, ax=ax)
             if not s_data[s_data['is_Highlighted']].empty:
                 sns.stripplot(data=s_data[s_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('SOLAR PV: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
-            st.pyplot(fig)
-            plt.close(fig) 
+            st.pyplot(fig); plt.close(fig) 
         else:
             st.info(t("No data for Solar PV.", "Sin datos de Solar PV."))
             
     with c2:
         w_data = grouped[grouped['Tech'] == 'Wind']
         if not w_data.empty:
-            order = w_data.groupby('MA')['Profit_per_MW'].mean().sort_values(ascending=False).index
+            order = w_data.groupby('MA', observed=True)['Profit_per_MW'].mean().sort_values(ascending=False).index
             fig, ax = plt.subplots(figsize=(8, 5))
             sns.boxplot(data=w_data, x='MA', y='Profit_per_MW', showfliers=False, color='lightgreen', order=order, ax=ax)
             if not w_data[w_data['is_Highlighted']].empty:
                 sns.stripplot(data=w_data[w_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('WIND: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
-            st.pyplot(fig)
-            plt.close(fig)
+            st.pyplot(fig); plt.close(fig)
 
 # ==============================================================================
 # SECCIÓN 2: ANÁLISIS MRA
@@ -290,15 +287,14 @@ elif seleccion_menu == menu_options[1]:
             cols_to_groupby = ['Tech','MA','Day','hour']
             cols_sum = ['PBF','Energy_p48','Energy_RT1','Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b','Profit_tr','Profit_i','Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr','Profit_p48','Rev_tr']
             
-            up_grouped = up_df.groupby(cols_to_groupby)[cols_sum].sum(numeric_only=True).reset_index()
+            up_grouped = up_df.groupby(cols_to_groupby, observed=True)[cols_sum].sum(numeric_only=True).reset_index()
             
             if 'Energy_i' not in up_grouped.columns: up_grouped['Energy_i'] = 0.0
             up_grouped['Profit_AASS'] = up_grouped[['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b']].sum(axis=1)
             up_grouped['Energy_AASS'] = up_grouped[['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se']].sum(axis=1)
-            
             up_grouped['Year_Month'] = up_grouped['Day'].dt.to_period('M').astype(str)
             
-            up_m = up_grouped.groupby(['Year_Month'])[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum(numeric_only=True).reset_index()
+            up_m = up_grouped.groupby(['Year_Month'], observed=True)[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum(numeric_only=True).reset_index()
             
             up_m['% p48/PBF'] = up_m['Energy_p48'] / up_m['PBF'].replace(0, np.nan)
             up_m['% RT1/PBF'] = -up_m['Energy_RT1'] / up_m['PBF'].replace(0, np.nan)
@@ -317,7 +313,7 @@ elif seleccion_menu == menu_options[1]:
             col_m1, col_m2 = st.columns(2)
             with col_m1:
                 st.markdown(f"**{t('Profit Breakdown (€/MWh)', 'Desglose de Beneficio (€/MWh)')}**")
-                g_df = up_grouped.drop(columns=['hour','Year_Month'], errors='ignore').groupby(['Tech','MA']).sum(numeric_only=True).reset_index()
+                g_df = up_grouped.drop(columns=['hour','Year_Month'], errors='ignore').groupby(['Tech','MA'], observed=True).sum(numeric_only=True).reset_index()
                 
                 if not g_df.empty:
                     w_data = g_df[g_df['MA'] == sel_ma].iloc[0]
@@ -332,9 +328,7 @@ elif seleccion_menu == menu_options[1]:
                         wf_df['€/MWh'] = wf_df['Valor'] / energy_diff
                         
                         fig_wf, ax_wf = plt.subplots(figsize=(7, 4))
-                        base = 0
-                        labels = []
-                        positions = np.arange(len(wf_df) + 1)
+                        base = 0; labels = []; positions = np.arange(len(wf_df) + 1)
                         
                         for i, row in wf_df.iterrows():
                             val = row['€/MWh']
@@ -353,8 +347,7 @@ elif seleccion_menu == menu_options[1]:
 
                         ax_wf.set_xticks(positions); ax_wf.set_xticklabels(labels, rotation=45, ha='right')
                         ax_wf.set_ylabel('€/MWh'); ax_wf.set_title(f"MRA Breakdown: {sel_ma}", fontsize=10)
-                        st.pyplot(fig_wf)
-                        plt.close(fig_wf)
+                        st.pyplot(fig_wf); plt.close(fig_wf)
                     else:
                         st.info(t("Net energy is zero.", "Energía neta es cero."))
 
@@ -369,8 +362,7 @@ elif seleccion_menu == menu_options[1]:
                 sns.lineplot(data=up_hourly_long, x='hour', y='MW', hue='label', marker='o', ax=ax_l, palette='Set2')
                 ax_l.set_xticks(range(0, 24)); ax_l.set_xlabel(t("Hour", "Hora")); ax_l.set_ylabel("MW"); ax_l.grid(True, alpha=0.3)
                 ax_l.legend(title='', fontsize=8); ax_l.set_title(t("Average Hourly Dispatch", "Despacho Horario Medio"), fontsize=10)
-                st.pyplot(fig_l)
-                plt.close(fig_l)
+                st.pyplot(fig_l); plt.close(fig_l)
 
     except Exception as e:
         st.error(f"{t('Error processing MRA:', 'Error procesando MRA:')} {e}")
@@ -391,12 +383,12 @@ elif seleccion_menu == menu_options[2]:
             col_rt_a1, col_rt_a2 = st.columns(2)
             with col_rt_a1:
                 st.markdown(f"**{t('All Market (Criteria: Min Bid < -50€)', 'Todo el Mercado (Criterio: Min Bid < -50€)')}**")
-                total_p_ma = filtered_rt5.groupby('MA')['Profit_tr_s'].sum()
+                total_p_ma = filtered_rt5.groupby('MA', observed=True)['Profit_tr_s'].sum()
                 e_p48_tr_diff_ma = filtered_rt5['Energy_p48'] - filtered_rt5['Energy_tr']
-                eur_mwh_r_ma = filtered_rt5.groupby('MA').apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_ma[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
-                w_avg_bid_ma = filtered_rt5.groupby('MA').apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
-                max_bid_ma = filtered_rt5.groupby('MA')['Price_RT5'].max()
-                min_bid_ma = filtered_rt5.groupby('MA')['Price_RT5'].min()
+                eur_mwh_r_ma = filtered_rt5.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_ma[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
+                w_avg_bid_ma = filtered_rt5.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
+                max_bid_ma = filtered_rt5.groupby('MA', observed=True)['Price_RT5'].max()
+                min_bid_ma = filtered_rt5.groupby('MA', observed=True)['Price_RT5'].min()
                 
                 res_ma = pd.DataFrame({'Total Profit RT5': total_p_ma, '€/MWh_resource': eur_mwh_r_ma, 'Weighted Avg Bid': w_avg_bid_ma, 'Max Bid': max_bid_ma, 'Min Bid': min_bid_ma})
                 filtered_res_ma = res_ma[res_ma['Min Bid'] < -50]
@@ -409,11 +401,12 @@ elif seleccion_menu == menu_options[2]:
                 up_rt5_v = filtered_rt5[filtered_rt5['UP'].isin(['FCTRAV2', 'PEVER'])].copy()
                 if up_rt5_v.empty: st.info(t("No data for FCTRAV2 or PEVER.", "Sin datos para FCTRAV2 o PEVER."))
                 else:
-                    total_p_v = up_rt5_v.groupby('MA')['Profit_tr_s'].sum()
+                    total_p_v = up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum()
                     e_p48_tr_diff_v = up_rt5_v['Energy_p48'] - up_rt5_v['Energy_tr']
-                    eur_mwh_r_v = up_rt5_v.groupby('MA').apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
-                    w_avg_bid_v = up_rt5_v.groupby('MA').apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
-                    res_v = pd.DataFrame({'Total Profit RT5': total_p_v, '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, 'Max Bid': up_rt5_v.groupby('MA')['Price_RT5'].max(), 'Min Bid': up_rt5_v.groupby('MA')['Price_RT5'].min()})
+                    eur_mwh_r_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
+                    w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
+                    res_v = pd.DataFrame({'Total Profit RT5': total_p_v, '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, 'Max Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()})
+                    res_v = res_v.dropna(subset=['Min Bid']) # Clean up empty categories
                     st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
 
             if not filtered_res_ma.empty:
@@ -454,7 +447,7 @@ elif seleccion_menu == menu_options[3]:
             gnwi['Profit_Total_Extra'] = gnwi[[c for c in profit_cols_to_sum if c in gnwi.columns]].sum(axis=1)
             gnwi['Potencia_MW'] = gnwi['UP'].map(POTENCIA_INSTALADA)
             
-            df_agg_gnera = gnwi.groupby('UP')[[c for c in profit_cols_to_sum if c in gnwi.columns] + ['Profit_Total_Extra']].sum(numeric_only=True).reset_index()
+            df_agg_gnera = gnwi.groupby('UP', observed=True)[[c for c in profit_cols_to_sum if c in gnwi.columns] + ['Profit_Total_Extra']].sum(numeric_only=True).reset_index()
             df_agg_gnera['Potencia_MW'] = df_agg_gnera['UP'].map(POTENCIA_INSTALADA)
             
             cols_to_normalize = [c for c in profit_cols_to_sum if c in df_agg_gnera.columns] + ['Profit_Total_Extra']
@@ -480,7 +473,7 @@ elif seleccion_menu == menu_options[3]:
             st.markdown("---")
             st.markdown(f"##### {t('Daily Profit Evolution (€/MW)', 'Evolución Diaria del Profit (€/MW)')}")
             gnwi['Profit_Total_eur_per_MW'] = gnwi['Profit_Total_Extra'] / gnwi['Potencia_MW']
-            df_hourly_norm = gnwi.groupby(['UP', 'hour'])['Profit_Total_eur_per_MW'].sum().reset_index()
+            df_hourly_norm = gnwi.groupby(['UP', 'hour'], observed=True)['Profit_Total_eur_per_MW'].sum().reset_index()
             fig_evo, ax_evo = plt.subplots(figsize=(15, 6))
             sns.lineplot(data=df_hourly_norm, x='hour', y='Profit_Total_eur_per_MW', hue='UP', marker='o', ax=ax_evo)
             ax_evo.set_xticks(range(0, 24)); ax_evo.grid(True, alpha=0.3); st.pyplot(fig_evo); plt.close(fig_evo)
@@ -491,7 +484,7 @@ elif seleccion_menu == menu_options[3]:
             for col in [c for c in profit_cols_to_sum if c in gnwi.columns]:
                 gnwi[f"{col}_norm"] = gnwi[col] / gnwi['Potencia_MW'].replace(0, np.nan)
             
-            df_hr_break = gnwi.groupby(['UP', 'hour'])[[f"{c}_norm" for c in profit_cols_to_sum if c in gnwi.columns]].sum().reset_index()
+            df_hr_break = gnwi.groupby(['UP', 'hour'], observed=True)[[f"{c}_norm" for c in profit_cols_to_sum if c in gnwi.columns]].sum().reset_index()
             
             fig_st, axes_st = plt.subplots(2, 2, figsize=(20, 14), sharex=True, sharey=True)
             axes_st = axes_st.flatten()
@@ -514,8 +507,8 @@ elif seleccion_menu == menu_options[3]:
             # 4x PBF vs Energy_p48
             st.markdown("---")
             st.markdown(f"##### {t('PBF vs Energy_p48 (% Max PBF)', 'PBF vs Energy_p48 (% del Máximo PBF)')}")
-            df_hourly_energy = gnwi.groupby(['UP', 'hour'])[['PBF', 'Energy_p48']].sum(numeric_only=True).reset_index()
-            max_pbf_values = df_hourly_energy.groupby('UP')['PBF'].transform('max').replace(0, np.nan)
+            df_hourly_energy = gnwi.groupby(['UP', 'hour'], observed=True)[['PBF', 'Energy_p48']].sum(numeric_only=True).reset_index()
+            max_pbf_values = df_hourly_energy.groupby('UP', observed=True)['PBF'].transform('max').replace(0, np.nan)
             
             df_norm = pd.DataFrame(index=df_hourly_energy.index)
             df_norm['PBF'] = df_hourly_energy['PBF'].div(max_pbf_values).fillna(0)
@@ -573,7 +566,7 @@ elif seleccion_menu == menu_options[4]:
         profit_cols_v = ['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i']
         df_v = allh[allh['UP'].isin(INPUT_DATA.keys())].copy()
         
-        df_agg_v = df_v.groupby('UP')[[c for c in profit_cols_v if c in df_v.columns]].sum(numeric_only=True).reindex(list(INPUT_DATA.keys())).reset_index().fillna(0)
+        df_agg_v = df_v.groupby('UP', observed=True)[[c for c in profit_cols_v if c in df_v.columns]].sum(numeric_only=True).reindex(list(INPUT_DATA.keys())).reset_index().fillna(0)
         df_agg_v['Total Profit'] = df_agg_v.iloc[:, 1:].sum(axis=1)
         df_agg_v['Verbund_Pct'] = [val[2] for val in INPUT_DATA.values()]
         df_agg_v['Profit Verbund'] = df_agg_v['Total Profit'] * df_agg_v['Verbund_Pct']
@@ -612,7 +605,7 @@ elif seleccion_menu == menu_options[5]:
             df_evo['YearMonth'] = df_evo['Day'].dt.to_period('M').astype(str)
             df_evo['Total_Profit'] = df_evo[['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']].sum(axis=1)
             
-            df_evo_m = df_evo.groupby(['UP', 'YearMonth']).agg(Total_Profit=('Total_Profit', 'sum'), Total_Energy=('Energy_p48', 'sum')).reset_index().sort_values('YearMonth')
+            df_evo_m = df_evo.groupby(['UP', 'YearMonth'], observed=True).agg(Total_Profit=('Total_Profit', 'sum'), Total_Energy=('Energy_p48', 'sum')).reset_index().sort_values('YearMonth')
             df_evo_m['Profit_per_MWh'] = df_evo_m['Total_Profit'] / df_evo_m['Total_Energy'].replace(0, np.nan)
             df_evo_m['Total_Profit_k'] = df_evo_m['Total_Profit'] / 1000
 
