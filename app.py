@@ -51,68 +51,55 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-# --- CARGA DE DATOS SÚPER-OPTIMIZADA PARA AHORRAR RAM ---
+# --- CARGA DE DATOS EXTREMA (PARA EVITAR EL COLAPSO DE RAM) ---
 @st.cache_data
 def load_allh_data():
-    import os
-    import gc
+    import glob
+    import pyarrow.dataset as ds
     import pyarrow.parquet as pq
+    import pandas as pd
+    import gc
     
     try:
+        # 1. Busca automáticamente TODOS los archivos parquet de la carpeta de golpe
+        # Ya no hace falta ni escribir los meses, si subes uno nuevo, lo detecta solo.
+        archivos = glob.glob('allh_*part*.parquet')
+        
+        if not archivos:
+            st.error(t("No data files found.", "No se han encontrado archivos de datos."))
+            return pd.DataFrame()
+            
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
                        'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i',
                        'Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 
                        'Profit_se', 'Profit_i', 'Rev_tr', 'Profit_p48']
+                       
+        # 2. Leemos la cabecera del primer archivo para ver qué columnas hay
+        schema = pq.read_schema(archivos[0])
+        cols_to_load = [c for c in cols_needed if c in schema.names]
         
-        # Generamos la lista de meses: desde '012025' hasta '122025'
-        meses = [f"{str(m).zfill(2)}2025" for m in range(1, 13)]
-        df_list = []
+        # 3. LA MAGIA: En lugar de leer 12 archivos y juntarlos (que duplica la RAM),
+        # creamos un "Dataset virtual" que los lee todos de golpe desde C++
+        dataset = ds.dataset(archivos, format="parquet")
         
-        for mes in meses:
-            for part in ['part1', 'part2']:
-                filename = f'allh_{mes}_{part}.parquet'
-                
-                if os.path.exists(filename):
-                    try:
-                        schema = pq.read_schema(filename)
-                        cols_to_load = [c for c in cols_needed if c in schema.names]
-                        
-                        # Leer el fragmento del mes
-                        df_temp = pd.read_parquet(filename, columns=cols_to_load)
-                        
-                        # --- TRUCO DE OPTIMIZACIÓN DE MEMORIA #1 ---
-                        # Forzar números de 64-bit a 32-bit (Ahorra un 50% de RAM al instante)
-                        for col in df_temp.select_dtypes(include=['float64']).columns:
-                            df_temp[col] = df_temp[col].astype('float32')
-                        for col in df_temp.select_dtypes(include=['int64']).columns:
-                            df_temp[col] = pd.to_numeric(df_temp[col], downcast='integer')
-                            
-                        df_list.append(df_temp)
-                    except Exception as e:
-                        st.warning(f"⚠️ El archivo {filename} dio un error al leerse: {e}")
-
-        if not df_list:
-            st.error(t("No .parquet files found for 2025.", "No se encontró ningún archivo .parquet de 2025."))
-            return pd.DataFrame()
+        # 4. Lo pasamos a Pandas de una sola vez
+        df = dataset.to_table(columns=cols_to_load).to_pandas()
+        
+        # 5. Comprimimos los datos en memoria inmediatamente
+        # Pasar de 64 bits a 32 bits reduce el peso de los números a la mitad
+        for col in df.select_dtypes(include=['float64']).columns:
+            df[col] = df[col].astype('float32')
             
-        # Unir todos los meses en una sola macro-tabla
-        df_final = pd.concat(df_list, ignore_index=True)
-        
-        # Borrar la lista temporal y vaciar la basura de la memoria RAM forzosamente
-        del df_list
-        gc.collect()
-        
-        # --- TRUCO DE OPTIMIZACIÓN DE MEMORIA #2 ---
-        # Convertir los textos repetitivos en 'categorías'. 
-        # (Ahorra hasta un 90% de RAM en columnas de texto como MA o UP)
+        # Convertir los textos en 'categorías' reduce su peso hasta un 90%
         for col in ['UP', 'MA', 'Tech']:
-            if col in df_final.columns:
-                df_final[col] = df_final[col].astype('category')
+            if col in df.columns:
+                df[col] = df[col].astype('category')
                 
-        return df_final
+        gc.collect() # Vaciamos la basura de la RAM forzosamente
+        return df
         
     except Exception as e:
-        st.error(f"{t('Critical error loading parquet files:', 'Error crítico cargando archivos parquet:')} {e}")
+        st.error(f"{t('Critical error:', 'Error crítico en la carga unificada:')} {e}")
         return pd.DataFrame()
         
 @st.cache_data
