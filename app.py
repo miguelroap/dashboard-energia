@@ -99,6 +99,7 @@ for col in cols_to_ensure:
         allh_full[col] = pd.to_numeric(allh_full[col], errors='coerce').fillna(0)
 
 # --- FILTRO DE FECHAS (GLOBAL) ---
+st.sidebar.markdown("---")
 st.sidebar.header(t("📅 Date Range (Global)", "📅 Rango de Fechas (Global)"))
 min_date, max_date = allh_full['Day'].min().date(), allh_full['Day'].max().date()
 selected_dates = st.sidebar.date_input(t("Select period:", "Selecciona periodo:"), value=(min_date, max_date), min_value=min_date, max_value=max_date)
@@ -106,8 +107,13 @@ selected_dates = st.sidebar.date_input(t("Select period:", "Selecciona periodo:"
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date, max_date)
 allh = allh_full[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)].copy()
 
-# --- PESTAÑAS ---
-tab_names = [
+# ==============================================================================
+# NAVEGACIÓN MULTIPÁGINA (SUSTITUYE A ST.TABS PARA AHORRAR RAM)
+# ==============================================================================
+st.sidebar.markdown("---")
+st.sidebar.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
+
+menu_options = [
     t("📈 Main Overview", "📈 Resumen Principal"), 
     t("⚡ MRA Analysis", "⚡ Análisis MRA"), 
     t("📋 RT5 Detail", "📋 Detalle RT5"),
@@ -115,12 +121,12 @@ tab_names = [
     t("💶 Verbund Profit", "💶 Beneficio Verbund"),
     t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 ]
-tab_main, tab_mra, tab_rt5_det, tab_gnera, tab_verbund, tab_evo = st.tabs(tab_names)
+seleccion_menu = st.sidebar.radio("", menu_options)
 
 # ==============================================================================
-# PESTAÑA 1: RESUMEN PRINCIPAL
+# SECCIÓN 1: RESUMEN PRINCIPAL
 # ==============================================================================
-with tab_main:
+if seleccion_menu == menu_options[0]:
     st.markdown(f'<div class="section-title">{t("Ancillary Services Revenue Dispersion by Technology", "Dispersión de ingresos en Servicios de ajuste por Tecnología")}</div>', unsafe_allow_html=True)
     
     col_f1, col_f2 = st.columns(2)
@@ -154,7 +160,7 @@ with tab_main:
     monthly = pd.merge(monthly, df_power, on='UP', how='left')
     monthly['Profit_per_MW'] = (monthly['Monthly_Profit'] / monthly['Power MW']).replace([np.inf, -np.inf], 0).fillna(0)
 
-    grouped = monthly.groupby(['UP', 'Tech', 'MA']).agg(Profit_per_MW=('Profit_per_MW', 'mean'), Total_Energy=('Monthly_Energy', 'sum')).reset_index()
+    grouped = monthly.groupby(['UP', 'Tech', 'MA']).agg(Profit_per_MW=('Profit_per_MW', 'mean')).reset_index()
     grouped['is_Highlighted'] = grouped['UP'].isin(selected_ups)
     
     c1, c2 = st.columns(2)
@@ -167,7 +173,7 @@ with tab_main:
             if not s_data[s_data['is_Highlighted']].empty:
                 sns.stripplot(data=s_data[s_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('SOLAR PV: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
-            st.pyplot(fig)
+            st.pyplot(fig); plt.close(fig)
         else:
             st.info(t("No data for Solar PV.", "Sin datos de Solar PV."))
             
@@ -180,12 +186,12 @@ with tab_main:
             if not w_data[w_data['is_Highlighted']].empty:
                 sns.stripplot(data=w_data[w_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('WIND: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
-            st.pyplot(fig)
+            st.pyplot(fig); plt.close(fig)
 
 # ==============================================================================
-# PESTAÑA 2: ANÁLISIS MRA
+# SECCIÓN 2: ANÁLISIS MRA
 # ==============================================================================
-with tab_mra:
+elif seleccion_menu == menu_options[1]:
     st.markdown(f'<div class="section-title">{t("MRA Analysis - Technology - Installation", "Análisis MRA - Tecnología - Instalación")}</div>', unsafe_allow_html=True)
     
     f_ma, f_tech, f_up = st.columns(3)
@@ -219,15 +225,14 @@ with tab_mra:
             cols_to_groupby = ['Tech','MA','Day','hour']
             cols_sum = ['PBF','Energy_p48','Energy_RT1','Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b','Profit_tr','Profit_i','Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr','Profit_p48','Rev_tr']
             
+            # Se usa numeric_only para evitar errores con Day
             up_grouped = up_df.groupby(cols_to_groupby)[cols_sum].sum(numeric_only=True).reset_index()
             
-            # Aseguramos columnas calculadas para evitar error: "Columns not found: 'Energy_AASS', 'Energy_i'"
             if 'Energy_i' not in up_grouped.columns: up_grouped['Energy_i'] = 0.0
             up_grouped['Profit_AASS'] = up_grouped[['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b']].sum(axis=1)
             up_grouped['Energy_AASS'] = up_grouped[['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se']].sum(axis=1)
             
             up_grouped['Year_Month'] = up_grouped['Day'].dt.to_period('M').astype(str)
-            
             up_m = up_grouped.groupby(['Year_Month'])[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum(numeric_only=True).reset_index()
             
             up_m['% p48/PBF'] = up_m['Energy_p48'] / up_m['PBF'].replace(0, np.nan)
@@ -283,7 +288,7 @@ with tab_mra:
 
                         ax_wf.set_xticks(positions); ax_wf.set_xticklabels(labels, rotation=45, ha='right')
                         ax_wf.set_ylabel('€/MWh'); ax_wf.set_title(f"MRA Breakdown: {sel_ma}", fontsize=10)
-                        st.pyplot(fig_wf)
+                        st.pyplot(fig_wf); plt.close(fig_wf)
                     else:
                         st.info(t("Net energy is zero.", "Energía neta es cero."))
 
@@ -298,15 +303,15 @@ with tab_mra:
                 sns.lineplot(data=up_hourly_long, x='hour', y='MW', hue='label', marker='o', ax=ax_l, palette='Set2')
                 ax_l.set_xticks(range(0, 24)); ax_l.set_xlabel(t("Hour", "Hora")); ax_l.set_ylabel("MW"); ax_l.grid(True, alpha=0.3)
                 ax_l.legend(title='', fontsize=8); ax_l.set_title(t("Average Hourly Dispatch", "Despacho Horario Medio"), fontsize=10)
-                st.pyplot(fig_l)
+                st.pyplot(fig_l); plt.close(fig_l)
 
     except Exception as e:
         st.error(f"{t('Error processing MRA:', 'Error procesando MRA:')} {e}")
 
 # ==============================================================================
-# PESTAÑA 3: DETALLE RT5
+# SECCIÓN 3: DETALLE RT5
 # ==============================================================================
-with tab_rt5_det:
+elif seleccion_menu == menu_options[2]:
     st.markdown(f'<div class="section-title">{t("RT5 Detail: Prices & Offers", "Detalle RT5: Precios y Ofertas")}</div>', unsafe_allow_html=True)
     try:
         filtered_rt5 = allh[(allh['Tech'].isin(['Solar PV', 'Wind'])) & (allh['Profit_tr_s'] != 0)].copy()
@@ -353,20 +358,21 @@ with tab_rt5_det:
                 with col_rt_b1:
                     fig_s, ax_s = plt.subplots(figsize=(8, 5))
                     sns.scatterplot(data=df_graph, x='MA', y='Price_RT5', alpha=0.3, s=30, color='#40466e', ax=ax_s)
-                    ax_s.set_title("Scatter: Price_RT5 vs MA", fontsize=10); ax_s.tick_params(axis='x', rotation=90); st.pyplot(fig_s)
+                    ax_s.set_title("Scatter: Price_RT5 vs MA", fontsize=10); ax_s.tick_params(axis='x', rotation=90); st.pyplot(fig_s); plt.close(fig_s)
                     
                 with col_rt_b2:
                     fig_b, ax_b = plt.subplots(figsize=(8, 5))
+                    # Eliminamos el argumento edgecolor que causaba problemas
                     sns.boxplot(data=df_graph, x='MA', y='Price_RT5', showfliers=False, palette='vlag', ax=ax_b)
-                    ax_b.set_title("Boxplot: Price_RT5 matched by Market Agent", fontsize=10); ax_b.tick_params(axis='x', rotation=90); st.pyplot(fig_b)
+                    ax_b.set_title("Boxplot: Price_RT5 matched by Market Agent", fontsize=10); ax_b.tick_params(axis='x', rotation=90); st.pyplot(fig_b); plt.close(fig_b)
 
     except Exception as e:
         st.error(f"{t('Error processing RT5 Detail:', 'Error procesando pestaña Detalle RT5:')} {e}")
 
 # ==============================================================================
-# PESTAÑA 4: ANÁLISIS GNERA (Añadidos TODOS los gráficos)
+# SECCIÓN 4: ANÁLISIS GNERA
 # ==============================================================================
-with tab_gnera:
+elif seleccion_menu == menu_options[3]:
     st.markdown(f'<div class="section-title">{t("Gnera Analysis", "Análisis Gnera")}</div>', unsafe_allow_html=True)
     try:
         POTENCIA_INSTALADA = {'EOTMR': 87.6, 'LECDE': 9.6, 'PEVER': 182.3, 'PEVER2': 29.8}
@@ -389,7 +395,6 @@ with tab_gnera:
             for col in cols_to_normalize:
                 df_agg_gnera[f'{col}'] = df_agg_gnera[col] / df_agg_gnera['Potencia_MW']
             
-            # HEATMAP
             df_heatmap = df_agg_gnera.set_index('UP').drop(columns=['Potencia_MW'])
             df_heatmap_components = df_heatmap.drop(columns=['Profit_Total_Extra'], errors='ignore')
             df_heatmap_total = df_heatmap[['Profit_Total_Extra']] if 'Profit_Total_Extra' in df_heatmap.columns else pd.DataFrame()
@@ -402,18 +407,16 @@ with tab_gnera:
             if not df_heatmap_total.empty:
                 sns.heatmap(df_heatmap_total, annot=True, fmt=',.2f', cmap='RdYlGn', center=df_heatmap_total.mean().values[0], annot_kws={"size": 12, "weight": "bold"}, cbar=False, ax=ax_total)
                 ax_total.set_yticks([])
-            st.pyplot(fig_hm)
+            st.pyplot(fig_hm); plt.close(fig_hm)
 
-            # GRÁFICOS EVOLUCIÓN
             st.markdown("---")
             st.markdown(f"##### {t('Daily Profit Evolution (€/MW)', 'Evolución Diaria del Profit (€/MW)')}")
             gnwi['Profit_Total_eur_per_MW'] = gnwi['Profit_Total_Extra'] / gnwi['Potencia_MW']
             df_hourly_norm = gnwi.groupby(['UP', 'hour'])['Profit_Total_eur_per_MW'].sum().reset_index()
             fig_evo, ax_evo = plt.subplots(figsize=(15, 6))
             sns.lineplot(data=df_hourly_norm, x='hour', y='Profit_Total_eur_per_MW', hue='UP', marker='o', ax=ax_evo)
-            ax_evo.set_xticks(range(0, 24)); ax_evo.grid(True, alpha=0.3); st.pyplot(fig_evo)
+            ax_evo.set_xticks(range(0, 24)); ax_evo.grid(True, alpha=0.3); st.pyplot(fig_evo); plt.close(fig_evo)
 
-            # 4x ÁREAS APILADAS POR UP
             st.markdown("---")
             st.markdown(f"##### {t('Stacked Profit Areas per UP (€/MW)', 'Áreas Apiladas de Profit por Instalación (€/MW)')}")
             for col in [c for c in profit_cols_to_sum if c in gnwi.columns]:
@@ -437,9 +440,8 @@ with tab_gnera:
             
             handles, labels = ax.get_legend_handles_labels()
             fig_st.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=min(4, len(labels)), fontsize=12)
-            st.pyplot(fig_st)
+            st.pyplot(fig_st); plt.close(fig_st)
 
-            # 4x PBF vs Energy_p48
             st.markdown("---")
             st.markdown(f"##### {t('PBF vs Energy_p48 (% Max PBF)', 'PBF vs Energy_p48 (% del Máximo PBF)')}")
             df_hourly_energy = gnwi.groupby(['UP', 'hour'])[['PBF', 'Energy_p48']].sum(numeric_only=True).reset_index()
@@ -462,9 +464,8 @@ with tab_gnera:
                 ax.set_title(f"Evolución Normalizada (vs Max PBF): {up}", fontsize=14)
                 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, p: f'{y * 100:.0f}%'))
                 ax.grid(True, alpha=0.3); ax.set_xticks(range(0, 24))
-            st.pyplot(fig_en)
+            st.pyplot(fig_en); plt.close(fig_en)
             
-            # GNERA AGREGADO
             st.markdown("---")
             st.markdown(f"##### {t('Aggregated GNERA Stacked Areas', 'GNERA Agregado - Áreas Apiladas Profit (€/MW)')}")
             df_gnera_hourly = gnwi.groupby('hour')[[c for c in profit_cols_to_sum if c in gnwi.columns]].sum(numeric_only=True).reset_index()
@@ -478,18 +479,17 @@ with tab_gnera:
                 ax_g_agg.stackplot(df_gnera_hourly['hour'], [df_gnera_hourly[c] for c in df_gnera_hourly.columns if c != 'hour'], labels=[c for c in df_gnera_hourly.columns if c != 'hour'], alpha=0.8)
                 ax_g_agg.set_title(t("GNERA Aggregated: Hourly Profit (€/MW)", "GNERA Agregado: Desglose Profit Horario (€/MW)"), fontsize=14)
                 ax_g_agg.set_xticks(range(0, 24)); ax_g_agg.grid(True, alpha=0.3); ax_g_agg.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-                st.pyplot(fig_g_agg)
+                st.pyplot(fig_g_agg); plt.close(fig_g_agg)
 
     except Exception as e:
         st.error(f"{t('Error in Gnera Analysis:', 'Error en Análisis Gnera:')} {e}")
 
 # ==============================================================================
-# PESTAÑA 5: BENEFICIO VERBUND (RESTAURADA TODA LA LISTA DE 18 UPs)
+# SECCIÓN 5: BENEFICIO VERBUND
 # ==============================================================================
-with tab_verbund:
+elif seleccion_menu == menu_options[4]:
     st.markdown(f'<div class="section-title">{t("Verbund Profit (€)", "Beneficio Verbund Servicios de Ajuste (€)")}</div>', unsafe_allow_html=True)
     try:
-        # AÑADIMOS LAS 18 UPs SOLICITADAS. Si no hay potencias/%, se pone 0.0 para que la tabla exista.
         INPUT_DATA = {
             'FCTRAV2': ['Calatrava', 41.0, 0.5], 'EAYAMON': ['Ayamonte', 26.0, 0.5], 'EGST146': ['Barroso', 21.6, 0.5],
             'PEVER': ['Sorolla 1', 182.3, 0.6], 'PEVER2': ['Sorolla Mallén', 29.8, 0.6],
@@ -508,7 +508,6 @@ with tab_verbund:
         df_agg_v['Profit Verbund'] = df_agg_v['Total Profit'] * df_agg_v['Verbund_Pct']
         df_agg_v['Potencia MW'] = [val[1] for val in INPUT_DATA.values()]
         
-        # Evitar división por cero
         df_agg_v['Profit Verbund / MW'] = np.where(df_agg_v['Potencia MW'] > 0, df_agg_v['Profit Verbund'] / df_agg_v['Potencia MW'], 0)
         
         totales = df_agg_v.select_dtypes(include=[np.number]).sum()
@@ -525,9 +524,9 @@ with tab_verbund:
         st.warning(f"{t('Error processing Verbund table:', 'Error procesando tabla Verbund:')} {e}")
 
 # ==============================================================================
-# PESTAÑA 6: EVOLUCIÓN INGRESOS
+# SECCIÓN 6: EVOLUCIÓN INGRESOS
 # ==============================================================================
-with tab_evo:
+elif seleccion_menu == menu_options[5]:
     st.markdown(f'<div class="section-title">{t("Revenue Evolution by Market Agent and Technology", "Evolución Ingresos por Representante y Tecnología")}</div>', unsafe_allow_html=True)
     try:
         col_e1, col_e2 = st.columns(2)
@@ -550,15 +549,15 @@ with tab_evo:
             with c_evo1:
                 fig1, ax1 = plt.subplots(figsize=(6, 4))
                 sns.lineplot(data=df_evo_m, x='YearMonth', y='Profit_per_MWh', hue='UP', marker='o', ax=ax1)
-                ax1.set_title(t("Profit Evolution (€/MWh)", "Evolución Profit (€/MWh)"), fontsize=10); ax1.tick_params(axis='x', rotation=45); st.pyplot(fig1)
+                ax1.set_title(t("Profit Evolution (€/MWh)", "Evolución Profit (€/MWh)"), fontsize=10); ax1.tick_params(axis='x', rotation=45); st.pyplot(fig1); plt.close(fig1)
             with c_evo2:
                 fig2, ax2 = plt.subplots(figsize=(6, 4))
                 sns.lineplot(data=df_evo_m, x='YearMonth', y='Total_Energy', hue='UP', marker='o', ax=ax2)
-                ax2.set_title(t("Production (MWh)", "Producción (MWh)"), fontsize=10); ax2.tick_params(axis='x', rotation=45); st.pyplot(fig2)
+                ax2.set_title(t("Production (MWh)", "Producción (MWh)"), fontsize=10); ax2.tick_params(axis='x', rotation=45); st.pyplot(fig2); plt.close(fig2)
             with c_evo3:
                 fig3, ax3 = plt.subplots(figsize=(6, 4))
                 sns.lineplot(data=df_evo_m, x='YearMonth', y='Total_Profit_k', hue='UP', marker='o', ax=ax3)
-                ax3.set_title(t("Total Profit (k€)", "Profit Total (k€)"), fontsize=10); ax3.tick_params(axis='x', rotation=45); st.pyplot(fig3)
+                ax3.set_title(t("Total Profit (k€)", "Profit Total (k€)"), fontsize=10); ax3.tick_params(axis='x', rotation=45); st.pyplot(fig3); plt.close(fig3)
             
     except Exception as e:
         st.warning(f"{t('Error processing evolution charts:', 'Error procesando gráficos de evolución:')} {e}")
