@@ -257,7 +257,6 @@ elif seleccion_menu == name_mra:
         if up_df.empty:
             st.warning(t("No data available.", "No hay datos disponibles para la combinación seleccionada."))
         else:
-            # --- CÁLCULOS BASE ---
             cols_to_groupby = ['Tech','MA','Day','hour'] if is_hourly else ['Tech','MA','Day']
             numeric_cols_avail = ['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_rt', 'Profit_t', 'Profit_rr', 
                                   'Profit_se', 'Profit_b', 'Profit_i', 'Profit_tr', 'Profit_p48', 'Energy_tr', 
@@ -280,7 +279,6 @@ elif seleccion_menu == name_mra:
             cols_mkts = ['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i', 'Profit_tr']
             up_hourly['Profit_total'] = up_hourly[cols_mkts].sum(axis=1)
 
-            # --- 1. TABLA RESUMEN NATIVA ---
             st.markdown(f"##### {t('Performance Summary', 'Resumen de Rendimiento (Performance Summary)')}")
             date_range_days = (up_hourly['Day'].max() - up_hourly['Day'].min()).days
             group_col = 'Day' if date_range_days <= 10 else 'Year_Month'
@@ -302,9 +300,15 @@ elif seleccion_menu == name_mra:
                 'Intras (€)': '{:,.0f} €', 'Intras (€/MWh)': '{:.2f} €', 'AASS (€/MWh)': '{:.2f} €'
             }), width='stretch')
 
-            # --- 2. WATERFALL MEJORADO Y BARRAS ---
+            # --- WATERFALL Y BARRAS ---
             st.markdown(f"##### {t('Economic Performance', 'Rendimiento Económico (Waterfall & Barras)')}")
-            total_row = up_hourly[numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']].sum(numeric_only=True)
+            
+            # FIX DEL BUG 1: Usar set() para eliminar columnas repetidas antes de sumar
+            cols_for_total = list(set(numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']))
+            cols_for_total = [c for c in cols_for_total if c in up_hourly.columns]
+            
+            total_row = up_hourly[cols_for_total].sum(numeric_only=True)
+            
             energy_base = total_row.get('Energy_p48', 0) - total_row.get('Energy_tr', 0)
             if energy_base == 0: energy_base = 1
             
@@ -320,7 +324,7 @@ elif seleccion_menu == name_mra:
             }
             wf_data = {k: v for k, v in wf_data.items() if abs(v) > 0.01}
             
-            profit_total_data = total_row[cols_mkts].sort_values(ascending=False)
+            profit_total_data = total_row[[c for c in cols_mkts if c in total_row.index]].sort_values(ascending=False)
             profit_total_data.index = [PROFIT_MAP.get(i, i) for i in profit_total_data.index]
             
             c_pos = '#2E8B57'; c_neg = '#CD5C5C'; c_tot = '#4682B4'; c_bg = 'whitesmoke'
@@ -384,7 +388,7 @@ elif seleccion_menu == name_mra:
             plt.subplots_adjust(wspace=0.4)
             st.pyplot(fig2); plt.close(fig2)
 
-            # --- 3. DAILY PROFIT EVOLUTION ---
+            # --- DAILY PROFIT EVOLUTION ---
             st.markdown(f"##### {t('Daily Profit Breakdown', 'Desglose Diario de Beneficio')}")
             daily_data = up_hourly.groupby('Day')[cols_mkts].sum()
             daily_data.columns = [PROFIT_MAP.get(c, c) for c in daily_data.columns]
@@ -407,7 +411,7 @@ elif seleccion_menu == name_mra:
             plt.tight_layout()
             st.pyplot(fig5); plt.close(fig5)
 
-            # --- 4. SECCIÓN HORARIA (SÓLO SI IS_HOURLY) ---
+            # --- SECCIÓN HORARIA (SÓLO SI IS_HOURLY) ---
             if is_hourly:
                 st.markdown("---")
                 st.markdown(f"##### {t('Hourly Profiles Analysis', 'Análisis de Perfiles Horarios')}")
@@ -663,6 +667,9 @@ elif seleccion_menu == name_evo:
                 st.warning(t("Showing top 20 UPs by Total Profit to avoid visual clutter.", "⚠️ Mostrando solo el Top 20 de UPs (por Beneficio Total) para evitar saturar el gráfico."))
                 top_ups = df_evo_m.groupby('UP', observed=True)['Total_Profit'].sum().nlargest(20).index
                 df_evo_m = df_evo_m[df_evo_m['UP'].isin(top_ups)]
+
+            # FIX DEL BUG 2: Forzamos UP a texto para borrar la memoria de categorías vacías en Seaborn
+            df_evo_m['UP'] = df_evo_m['UP'].astype(str)
 
             c_evo1, c_evo2, c_evo3 = st.columns(3)
             with c_evo1:
