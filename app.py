@@ -60,23 +60,19 @@ if st.sidebar.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recarg
 st.sidebar.markdown("---")
 
 # ==============================================================================
-# CARGA DE DATOS BAJO DEMANDA (LAZY LOADING)
+# CARGA DE DATOS FIJADA EXCLUSIVAMENTE A ENERO Y FEBRERO
 # ==============================================================================
-archivos_disponibles = glob.glob('allh_*_part*.parquet')
-meses_disponibles = sorted(list(set([f.split('_')[1] for f in archivos_disponibles if len(f.split('_')) > 1])))
-
-if not meses_disponibles:
-    st.error(t("No data files found in the repository.", "No se han encontrado archivos de datos en el repositorio."))
-    st.stop()
+# Aquí fijamos los meses manualmente en lugar de escanear toda la carpeta
+meses_disponibles = ['012025', '022025']
 
 st.sidebar.header(t("📂 Data Loader", "📂 Carga de Datos (RAM)"))
-meses_formateados = {m: f"{m[:2]}/{m[2:]}" for m in meses_disponibles}
+meses_formateados = {'012025': '01/2025', '022025': '02/2025'}
 
 selected_months = st.sidebar.multiselect(
     t("Select months to load:", "Selecciona los meses a cargar:"),
     options=meses_disponibles,
-    format_func=lambda x: meses_formateados[x],
-    default=[meses_disponibles[-1]]
+    format_func=lambda x: meses_formateados.get(x, x),
+    default=meses_disponibles # Carga enero y febrero por defecto
 )
 
 if not selected_months:
@@ -87,12 +83,18 @@ if not selected_months:
 def load_allh_data(meses_a_cargar):
     import pyarrow.dataset as ds
     import pyarrow.parquet as pq
+    import os
     try:
         archivos_a_leer = []
         for m in meses_a_cargar:
-            archivos_a_leer.extend(glob.glob(f'allh_{m}_part*.parquet'))
+            # Buscamos las dos partes de cada mes seleccionado
+            for part in ['part1', 'part2']:
+                archivo = f'allh_{m}_{part}.parquet'
+                if os.path.exists(archivo):
+                    archivos_a_leer.append(archivo)
             
         if not archivos_a_leer:
+            st.error(t("File not found in GitHub. Please upload it.", "Archivos no encontrados en GitHub. Asegúrate de subirlos."))
             return pd.DataFrame()
 
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
@@ -120,10 +122,13 @@ def load_allh_data(meses_a_cargar):
 
 @st.cache_data
 def load_power_data():
+    import os
     try:
-        df = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
-        df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce')
-        return df.dropna(subset=['Power MW', 'UP'])
+        if os.path.exists('ups_dashboard.parquet'):
+            df = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
+            df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce')
+            return df.dropna(subset=['Power MW', 'UP'])
+        return pd.DataFrame(columns=['UP', 'Power MW'])
     except Exception:
         return pd.DataFrame(columns=['UP', 'Power MW'])
 
@@ -154,7 +159,7 @@ start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date
 allh = allh_full[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)].copy()
 
 # ==============================================================================
-# MENÚ DE NAVEGACIÓN (SUSTITUYE A ST.TABS PARA AHORRAR RAM)
+# MENÚ DE NAVEGACIÓN (MULTIPLEXING)
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
@@ -220,7 +225,7 @@ if seleccion_menu == menu_options[0]:
                 sns.stripplot(data=s_data[s_data['is_Highlighted']], x='MA', y='Profit_per_MW', size=8, color='red', order=order, ax=ax)
             ax.set_title('SOLAR PV: Profit ordered by Agent Mean'); ax.tick_params(axis='x', rotation=45); ax.axhline(0, color='grey', linestyle='--')
             st.pyplot(fig)
-            plt.close(fig) # Liberar memoria forzosamente
+            plt.close(fig) 
         else:
             st.info(t("No data for Solar PV.", "Sin datos de Solar PV."))
             
