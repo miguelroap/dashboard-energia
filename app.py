@@ -231,235 +231,235 @@ if seleccion_menu == name_main:
 # ==============================================================================
 elif seleccion_menu == name_mra:
     st.markdown(f'<div class="section-title">{t("MRA Analysis - Technology - Installation", "Análisis MRA - Tecnología - Instalación")}</div>', unsafe_allow_html=True)
-    
-    PROFIT_MAP = {
-        'Profit_rt': 'RRTT F2', 'Profit_tr': 'RT5', 'Profit_tr_s': 'RT5_strategy',
-        'Profit_t': 'Tertiary', 'Profit_rr': 'RR', 'Profit_b': 'Sec. Band',
-        'Profit_se': 'Sec. Activation', 'Profit_i': 'Intraday'
-    }
-
-    f_ma, f_tech, f_up = st.columns(3)
-    with f_ma:
-        ma_mask = (allh['Profit_rt']!=0)|(allh['Profit_b']!=0)|(allh['Profit_t']!=0)|(allh['Profit_rr']!=0)
-        qualified_MAs = sorted(allh[ma_mask]['MA'].unique()) if not allh[ma_mask].empty else [t('No data', 'Sin datos')]
-        sel_ma = st.selectbox(t("1. Market Agent (MA)", "1. Representante (MA)"), qualified_MAs)
-    with f_tech:
-        tech_opts = sorted(allh[allh['MA'] == sel_ma]['Tech'].unique()) if sel_ma != t('No data', 'Sin datos') else [t('No data', 'Sin datos')]
-        sel_tech = st.selectbox(t("2. Technology", "2. Tecnología"), tech_opts)
-    with f_up:
-        up_rt5 = allh.loc[(allh['MA']==sel_ma) & (allh['Tech']==sel_tech)]
-        up_opts = [t('Any UP', 'Cualquier UP')] + sorted(up_rt5[(up_rt5['Profit_rt']!=0)|(up_rt5['Profit_b']!=0)]['UP'].unique().tolist())
-        sel_up = st.selectbox(t("3. Production Unit (UP)", "3. Unidad (UP)"), up_opts)
-
-    if sel_up == t('Any UP', 'Cualquier UP'): up_df = allh.loc[allh['UP'].isin(up_rt5['UP'].unique())].copy()
-    else: up_df = allh.loc[allh['UP'] == sel_up].copy()
-        
-    if up_df.empty:
-        st.warning(t("No data available.", "No hay datos disponibles para la combinación seleccionada."))
-    else:
-        # --- CÁLCULOS BASE ---
-        cols_to_groupby = ['Tech','MA','Day','hour'] if is_hourly else ['Tech','MA','Day']
-        numeric_cols_avail = ['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_rt', 'Profit_t', 'Profit_rr', 
-                              'Profit_se', 'Profit_b', 'Profit_i', 'Profit_tr', 'Profit_p48', 'Energy_tr', 
-                              'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_i', 'Rev_spot']
-        
-        for c in numeric_cols_avail:
-            if c not in up_df.columns: up_df[c] = 0.0
-            
-        up_hourly = up_df.groupby(cols_to_groupby, observed=True)[numeric_cols_avail].sum(numeric_only=True).reset_index()
-        
-        up_hourly['Year_Month'] = up_hourly['Day'].dt.to_period('M').astype(str)
-        up_hourly['Profit_AASS'] = up_hourly[['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b','Profit_tr']].sum(axis=1)
-        
-        aass_energy_cols = ['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se','Energy_tr']
-        up_hourly['Energy_AASS'] = up_hourly[aass_energy_cols].sum(axis=1)
-        
-        if up_hourly['Profit_p48'].sum() == 0 and 'Rev_spot' in up_hourly.columns:
-            up_hourly['Profit_p48'] = up_hourly['Rev_spot']
-
-        cols_mkts = ['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i', 'Profit_tr']
-        up_hourly['Profit_total'] = up_hourly[cols_mkts].sum(axis=1)
-
-        # --- 1. TABLA RESUMEN NATIVA ---
-        st.markdown(f"##### {t('Performance Summary', 'Resumen de Rendimiento (Performance Summary)')}")
-        date_range_days = (up_hourly['Day'].max() - up_hourly['Day'].min()).days
-        group_col = 'Day' if date_range_days <= 10 else 'Year_Month'
-        group_col_name = 'Date' if group_col == 'Day' else 'Month'
-        
-        up_summary = up_hourly.groupby([group_col], observed=True)[['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_AASS', 'Profit_tr', 'Profit_i']].sum(numeric_only=True).reset_index()
-        
-        up_summary['% P48 vs PBF'] = up_summary['Energy_p48'] / up_summary['PBF'].replace(0, np.nan)
-        up_summary['% RT1 vs PBF'] = -up_summary['Energy_RT1'] / up_summary['PBF'].replace(0, np.nan)
-        up_summary['Intras €/MWh'] = up_summary['Profit_i'] / up_summary['Energy_p48'].replace(0, np.nan)
-        up_summary['AASS €/MWh'] = up_summary['Profit_AASS'] / up_summary['Energy_p48'].replace(0, np.nan)
-
-        df_table = up_summary[[group_col, '% P48 vs PBF', '% RT1 vs PBF', 'Profit_tr', 'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']].copy()
-        df_table.columns = [group_col_name, '% P48 vs PBF', '% RT1 vs PBF', 'Real Time (€)', 'AASS (€)', 'Intras (€)', 'Intras (€/MWh)', 'AASS (€/MWh)']
-        df_table[group_col_name] = df_table[group_col_name].astype(str)
-        
-        st.dataframe(df_table.set_index(group_col_name).style.format({
-            '% P48 vs PBF': '{:.1%}', '% RT1 vs PBF': '{:.1%}', 'Real Time (€)': '{:,.0f} €', 'AASS (€)': '{:,.0f} €', 
-            'Intras (€)': '{:,.0f} €', 'Intras (€/MWh)': '{:.2f} €', 'AASS (€/MWh)': '{:.2f} €'
-        }), use_container_width=True)
-
-        # --- 2. WATERFALL MEJORADO Y BARRAS ---
-        st.markdown(f"##### {t('Economic Performance', 'Rendimiento Económico (Waterfall & Barras)')}")
-        total_row = up_hourly[numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']].sum(numeric_only=True)
-        energy_base = total_row.get('Energy_p48', 0) - total_row.get('Energy_tr', 0)
-        if energy_base == 0: energy_base = 1
-        
-        wf_data = {
-            'Spot': total_row.get('Profit_p48', 0) / energy_base,
-            'RRTT Ph2': total_row.get('Profit_rt', 0) / energy_base,
-            'RT5': total_row.get('Profit_tr', 0) / energy_base,
-            'Tertiary': total_row.get('Profit_t', 0) / energy_base,
-            'RR': total_row.get('Profit_rr', 0) / energy_base,
-            'Sec. Band': total_row.get('Profit_b', 0) / energy_base,
-            'Sec. Energy': total_row.get('Profit_se', 0) / energy_base,
-            'Intras': total_row.get('Profit_i', 0) / energy_base
+    try:
+        PROFIT_MAP = {
+            'Profit_rt': 'RRTT F2', 'Profit_tr': 'RT5', 'Profit_tr_s': 'RT5_strategy',
+            'Profit_t': 'Tertiary', 'Profit_rr': 'RR', 'Profit_b': 'Sec. Band',
+            'Profit_se': 'Sec. Activation', 'Profit_i': 'Intraday'
         }
-        wf_data = {k: v for k, v in wf_data.items() if abs(v) > 0.01}
-        
-        profit_total_data = total_row[cols_mkts].sort_values(ascending=False)
-        profit_total_data.index = [PROFIT_MAP.get(i, i) for i in profit_total_data.index]
-        
-        c_pos = '#2E8B57'; c_neg = '#CD5C5C'; c_tot = '#4682B4'; c_bg = 'whitesmoke'
-        
-        fig2, (ax_wf, ax_bar) = plt.subplots(1, 2, figsize=(18, 7))
-        def style_card(ax, title):
-            ax.set_facecolor(c_bg)
-            rect = patches.Rectangle((0, 0), 1, 1, transform=ax.transAxes, linewidth=0, facecolor=c_bg, zorder=0, alpha=0.5)
-            ax.add_patch(rect)
-            ax.text(0.5, 1.05, title, transform=ax.transAxes, ha='center', va='bottom', fontsize=14, fontweight='bold', color='#333333')
-            for spine in ['top', 'right', 'left']: ax.spines[spine].set_visible(False)
-            ax.spines['bottom'].set_color('#cccccc')
 
-        if wf_data:
-            labels = list(wf_data.keys()) + ['TOTAL']
-            values = list(wf_data.values())
-            
-            ax_wf.bar(labels[0], values[0], color=c_tot, width=0.6, zorder=3)
-            ax_wf.text(0, values[0] + (1 if values[0]>0 else -2), f"{values[0]:,.0f}", ha='center', va='bottom' if values[0]>0 else 'top', fontweight='bold', color='#333333')
-            
-            curr_h = values[0]
-            for i in range(1, len(values)):
-                change = values[i]
-                color = c_pos if change >= 0 else c_neg
-                prev_h = curr_h
-                ax_wf.plot([i-1.3, i+0.3], [prev_h, prev_h], color='gray', linestyle='--', linewidth=0.8, alpha=0.7, zorder=2)
-                ax_wf.bar(labels[i], change, bottom=curr_h, color=color, width=0.6, zorder=3)
-                offset = 1 if change >= 0 else -1
-                ax_wf.text(i, curr_h + change + offset, f"{change:+,.0f}", ha='center', va='bottom' if change>0 else 'top', fontsize=11, color='#333333')
-                curr_h += change
-                
-            ax_wf.bar(labels[-1], curr_h, color=c_tot, width=0.6, zorder=3)
-            ax_wf.plot([len(values)-1.3, len(values)-0.7], [curr_h, curr_h], color='gray', linestyle='--', linewidth=0.8, alpha=0.7)
-            ax_wf.text(len(labels)-1, curr_h + (1 if curr_h>0 else -1), f"{curr_h:,.0f}", ha='center', va='bottom' if curr_h>0 else 'top', fontweight='bold', fontsize=12, color='#333333')
-            
-            style_card(ax_wf, "Unit Profit Breakdown (€/MWh)")
-            ax_wf.set_yticks([]); ax_wf.grid(axis='y', linestyle=':', color='gray', alpha=0.3)
-            plt.setp(ax_wf.get_xticklabels(), rotation=45, ha="right", fontsize=11, color='#555555')
-        
-        if not profit_total_data.empty:
-            colors = [c_pos if x >= 0 else c_neg for x in profit_total_data]
-            bars = ax_bar.barh(profit_total_data.index, profit_total_data, color=colors, zorder=3)
-            style_card(ax_bar, "Total Accumulated Profit (€)")
-            ax_bar.spines['bottom'].set_visible(False)
-            ax_bar.spines['left'].set_color('#cccccc')
-            ax_bar.set_xticks([])
-            ax_bar.set_yticks(range(len(profit_total_data)))
-            ax_bar.set_yticklabels(profit_total_data.index, fontsize=12, color='#444444', fontweight='medium')
-            ax_bar.tick_params(axis='y', length=0)
-            ax_bar.grid(axis='x', linestyle=':', color='gray', alpha=0.3)
-            
-            data_range = profit_total_data.max() - profit_total_data.min()
-            if data_range == 0: data_range = abs(profit_total_data.max()) or 100
-            pad = data_range * 0.02 
-            ax_bar.set_xlim(min(profit_total_data.min(), 0), max(profit_total_data.max(), 0) + (pad * 6))
-            
-            for rect in bars:
-                width = rect.get_width()
-                ax_bar.text(width + pad, rect.get_y() + rect.get_height()/2, f'{int(width):,}', ha='left', va='center', fontweight='bold', fontsize=11, color='#333333')
-                
-        plt.subplots_adjust(wspace=0.4)
-        st.pyplot(fig2); plt.close(fig2)
+        f_ma, f_tech, f_up = st.columns(3)
+        with f_ma:
+            ma_mask = (allh['Profit_rt']!=0)|(allh['Profit_b']!=0)|(allh['Profit_t']!=0)|(allh['Profit_rr']!=0)
+            qualified_MAs = sorted(allh[ma_mask]['MA'].unique()) if not allh[ma_mask].empty else [t('No data', 'Sin datos')]
+            sel_ma = st.selectbox(t("1. Market Agent (MA)", "1. Representante (MA)"), qualified_MAs)
+        with f_tech:
+            tech_opts = sorted(allh[allh['MA'] == sel_ma]['Tech'].unique()) if sel_ma != t('No data', 'Sin datos') else [t('No data', 'Sin datos')]
+            sel_tech = st.selectbox(t("2. Technology", "2. Tecnología"), tech_opts)
+        with f_up:
+            up_rt5 = allh.loc[(allh['MA']==sel_ma) & (allh['Tech']==sel_tech)]
+            up_opts = [t('Any UP', 'Cualquier UP')] + sorted(up_rt5[(up_rt5['Profit_rt']!=0)|(up_rt5['Profit_b']!=0)]['UP'].unique().tolist())
+            sel_up = st.selectbox(t("3. Production Unit (UP)", "3. Unidad (UP)"), up_opts)
 
-        # --- 3. DAILY PROFIT EVOLUTION ---
-        st.markdown(f"##### {t('Daily Profit Breakdown', 'Desglose Diario de Beneficio')}")
-        daily_data = up_hourly.groupby('Day')[cols_mkts].sum()
-        daily_data.columns = [PROFIT_MAP.get(c, c) for c in daily_data.columns]
-        daily_data.index = daily_data.index.strftime('%d/%m/%Y')
-        
-        fig5, ax5 = plt.subplots(figsize=(16, 6))
-        daily_data.plot(kind='bar', stacked=True, ax=ax5, colormap='tab20', width=0.8)
-        ax5.set_ylabel('Profit (€)', fontsize=12); ax5.set_xlabel('Date', fontsize=12)
-        ax5.grid(axis='y', linestyle='--', alpha=0.4)
-        ax5.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
-        ax5.legend(title='Market Breakdown', bbox_to_anchor=(1.01, 1), loc='upper left')
-        
-        n_days = len(daily_data)
-        if n_days > 20: 
-            step = max(1, n_days // 20)
-            ax5.set_xticks(range(0, n_days, step))
-            ax5.set_xticklabels(daily_data.index[::step], rotation=45, ha='right')
+        if sel_up == t('Any UP', 'Cualquier UP'): up_df = allh.loc[allh['UP'].isin(up_rt5['UP'].unique())].copy()
+        else: up_df = allh.loc[allh['UP'] == sel_up].copy()
+            
+        if up_df.empty:
+            st.warning(t("No data available.", "No hay datos disponibles para la combinación seleccionada."))
         else:
-            plt.setp(ax5.get_xticklabels(), rotation=45, ha="right")
-        plt.tight_layout()
-        st.pyplot(fig5); plt.close(fig5)
+            # --- CÁLCULOS BASE ---
+            cols_to_groupby = ['Tech','MA','Day','hour'] if is_hourly else ['Tech','MA','Day']
+            numeric_cols_avail = ['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_rt', 'Profit_t', 'Profit_rr', 
+                                  'Profit_se', 'Profit_b', 'Profit_i', 'Profit_tr', 'Profit_p48', 'Energy_tr', 
+                                  'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_i', 'Rev_spot']
+            
+            for c in numeric_cols_avail:
+                if c not in up_df.columns: up_df[c] = 0.0
+                
+            up_hourly = up_df.groupby(cols_to_groupby, observed=True)[numeric_cols_avail].sum(numeric_only=True).reset_index()
+            
+            up_hourly['Year_Month'] = up_hourly['Day'].dt.to_period('M').astype(str)
+            up_hourly['Profit_AASS'] = up_hourly[['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b','Profit_tr']].sum(axis=1)
+            
+            aass_energy_cols = ['Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se','Energy_tr']
+            up_hourly['Energy_AASS'] = up_hourly[aass_energy_cols].sum(axis=1)
+            
+            if up_hourly['Profit_p48'].sum() == 0 and 'Rev_spot' in up_hourly.columns:
+                up_hourly['Profit_p48'] = up_hourly['Rev_spot']
 
-        # --- 4. SECCIÓN HORARIA (SÓLO SI IS_HOURLY) ---
-        if is_hourly:
-            st.markdown("---")
-            st.markdown(f"##### {t('Hourly Profiles Analysis', 'Análisis de Perfiles Horarios')}")
-            
-            hourly_prof_avg = up_hourly.groupby('hour')[['PBF', 'Energy_p48', 'Energy_i', 'Energy_tr', 'Energy_AASS']].mean()
-            up_hourly['datetime'] = pd.to_datetime(up_hourly['Day']) + pd.to_timedelta(up_hourly['hour'], unit='h')
-            hourly_prof_ts = up_hourly.set_index('datetime')[['PBF', 'Energy_p48', 'Energy_i', 'Energy_tr', 'Energy_AASS']].sort_index()
+            cols_mkts = ['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i', 'Profit_tr']
+            up_hourly['Profit_total'] = up_hourly[cols_mkts].sum(axis=1)
 
-            labels_prof = {'PBF': 'PBF', 'Energy_p48': 'Spot', 'Energy_i': 'Intra', 'Energy_tr': 'RT5', 'Energy_AASS': 'AASS'}
-            fig3, (ax_avg, ax_ts) = plt.subplots(2, 1, figsize=(16, 12))
+            # --- 1. TABLA RESUMEN NATIVA ---
+            st.markdown(f"##### {t('Performance Summary', 'Resumen de Rendimiento (Performance Summary)')}")
+            date_range_days = (up_hourly['Day'].max() - up_hourly['Day'].min()).days
+            group_col = 'Day' if date_range_days <= 10 else 'Year_Month'
+            group_col_name = 'Date' if group_col == 'Day' else 'Month'
             
-            for col in labels_prof:
-                if col in hourly_prof_avg.columns:
-                    style = '--' if 'PBF' in col else '-'
-                    color = 'red' if col == 'Energy_AASS' else None
-                    ax_avg.plot(hourly_prof_avg.index, hourly_prof_avg[col], label=labels_prof[col], ls=style, lw=1.5, color=color)
-            ax_avg.set_title(t('Average Hourly Dispatch Profile (MW)', 'Perfil de Despacho Horario Medio (MW)'), fontsize=14); ax_avg.legend(); ax_avg.grid(True, alpha=0.3)
+            up_summary = up_hourly.groupby([group_col], observed=True)[['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_AASS', 'Profit_tr', 'Profit_i']].sum(numeric_only=True).reset_index()
+            
+            up_summary['% P48 vs PBF'] = up_summary['Energy_p48'] / up_summary['PBF'].replace(0, np.nan)
+            up_summary['% RT1 vs PBF'] = -up_summary['Energy_RT1'] / up_summary['PBF'].replace(0, np.nan)
+            up_summary['Intras €/MWh'] = up_summary['Profit_i'] / up_summary['Energy_p48'].replace(0, np.nan)
+            up_summary['AASS €/MWh'] = up_summary['Profit_AASS'] / up_summary['Energy_p48'].replace(0, np.nan)
 
-            for col in labels_prof:
-                if col in hourly_prof_ts.columns:
-                    style = '--' if 'PBF' in col else '-'
-                    color = 'red' if col == 'Energy_AASS' else None
-                    ax_ts.plot(hourly_prof_ts.index, hourly_prof_ts[col], label=labels_prof[col], ls=style, lw=1, alpha=0.8, color=color)
-            ax_ts.set_title(t('Full Period Hourly Evolution (MW)', 'Evolución Horaria Periodo Completo (MW)'), fontsize=14); ax_ts.grid(True, alpha=0.3)
-            plt.tight_layout()
-            st.pyplot(fig3); plt.close(fig3)
+            df_table = up_summary[[group_col, '% P48 vs PBF', '% RT1 vs PBF', 'Profit_tr', 'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']].copy()
+            df_table.columns = [group_col_name, '% P48 vs PBF', '% RT1 vs PBF', 'Real Time (€)', 'AASS (€)', 'Intras (€)', 'Intras (€/MWh)', 'AASS (€/MWh)']
+            df_table[group_col_name] = df_table[group_col_name].astype(str)
             
-            # Detalle Diario
-            st.markdown(f"##### {t('Detailed Daily Inspection', 'Inspección Diaria Detallada')}")
-            col_d1, _ = st.columns([1, 2])
-            with col_d1:
-                available_dates = up_hourly['Day'].dt.date.unique()
-                input_detailed_date = st.date_input("Selecciona un día específico:", value=available_dates[0], min_value=min(available_dates), max_value=max(available_dates))
+            st.dataframe(df_table.set_index(group_col_name).style.format({
+                '% P48 vs PBF': '{:.1%}', '% RT1 vs PBF': '{:.1%}', 'Real Time (€)': '{:,.0f} €', 'AASS (€)': '{:,.0f} €', 
+                'Intras (€)': '{:,.0f} €', 'Intras (€/MWh)': '{:.2f} €', 'AASS (€/MWh)': '{:.2f} €'
+            }), width='stretch')
+
+            # --- 2. WATERFALL MEJORADO Y BARRAS ---
+            st.markdown(f"##### {t('Economic Performance', 'Rendimiento Económico (Waterfall & Barras)')}")
+            total_row = up_hourly[numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']].sum(numeric_only=True)
+            energy_base = total_row.get('Energy_p48', 0) - total_row.get('Energy_tr', 0)
+            if energy_base == 0: energy_base = 1
             
-            if input_detailed_date:
-                df_day = up_hourly[up_hourly['Day'].dt.date == input_detailed_date].copy()
-                if not df_day.empty:
-                    day_hourly = df_day.groupby('hour')[cols_mkts].sum()
-                    day_hourly.columns = [PROFIT_MAP.get(c, c) for c in day_hourly.columns]
+            wf_data = {
+                'Spot': total_row.get('Profit_p48', 0) / energy_base,
+                'RRTT Ph2': total_row.get('Profit_rt', 0) / energy_base,
+                'RT5': total_row.get('Profit_tr', 0) / energy_base,
+                'Tertiary': total_row.get('Profit_t', 0) / energy_base,
+                'RR': total_row.get('Profit_rr', 0) / energy_base,
+                'Sec. Band': total_row.get('Profit_b', 0) / energy_base,
+                'Sec. Energy': total_row.get('Profit_se', 0) / energy_base,
+                'Intras': total_row.get('Profit_i', 0) / energy_base
+            }
+            wf_data = {k: v for k, v in wf_data.items() if abs(v) > 0.01}
+            
+            profit_total_data = total_row[cols_mkts].sort_values(ascending=False)
+            profit_total_data.index = [PROFIT_MAP.get(i, i) for i in profit_total_data.index]
+            
+            c_pos = '#2E8B57'; c_neg = '#CD5C5C'; c_tot = '#4682B4'; c_bg = 'whitesmoke'
+            
+            fig2, (ax_wf, ax_bar) = plt.subplots(1, 2, figsize=(18, 7))
+            def style_card(ax, title):
+                ax.set_facecolor(c_bg)
+                rect = patches.Rectangle((0, 0), 1, 1, transform=ax.transAxes, linewidth=0, facecolor=c_bg, zorder=0, alpha=0.5)
+                ax.add_patch(rect)
+                ax.text(0.5, 1.05, title, transform=ax.transAxes, ha='center', va='bottom', fontsize=14, fontweight='bold', color='#333333')
+                for spine in ['top', 'right', 'left']: ax.spines[spine].set_visible(False)
+                ax.spines['bottom'].set_color('#cccccc')
+
+            if wf_data:
+                labels = list(wf_data.keys()) + ['TOTAL']
+                values = list(wf_data.values())
+                
+                ax_wf.bar(labels[0], values[0], color=c_tot, width=0.6, zorder=3)
+                ax_wf.text(0, values[0] + (1 if values[0]>0 else -2), f"{values[0]:,.0f}", ha='center', va='bottom' if values[0]>0 else 'top', fontweight='bold', color='#333333')
+                
+                curr_h = values[0]
+                for i in range(1, len(values)):
+                    change = values[i]
+                    color = c_pos if change >= 0 else c_neg
+                    prev_h = curr_h
+                    ax_wf.plot([i-1.3, i+0.3], [prev_h, prev_h], color='gray', linestyle='--', linewidth=0.8, alpha=0.7, zorder=2)
+                    ax_wf.bar(labels[i], change, bottom=curr_h, color=color, width=0.6, zorder=3)
+                    offset = 1 if change >= 0 else -1
+                    ax_wf.text(i, curr_h + change + offset, f"{change:+,.0f}", ha='center', va='bottom' if change>0 else 'top', fontsize=11, color='#333333')
+                    curr_h += change
                     
-                    fig4, ax4 = plt.subplots(figsize=(14, 6))
-                    day_hourly.plot(kind='bar', stacked=True, ax=ax4, colormap='tab20')
-                    ax4.set_title(f'Hourly Profit Breakdown: {input_detailed_date.strftime("%d/%m/%Y")}', fontsize=16, fontweight='bold', pad=15)
-                    ax4.set_ylabel('Profit (€)'); ax4.set_xlabel('Hour')
-                    ax4.grid(axis='y', alpha=0.3); ax4.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
-                    ax4.legend(bbox_to_anchor=(1.01, 1), loc='upper left')
-                    plt.tight_layout()
-                    st.pyplot(fig4); plt.close(fig4)
-                else:
-                    st.info(f"No hay datos horarios para {input_detailed_date}")
-        else:
-            st.info(t("Switch to Operational Mode (Hourly) to see Hourly Profiles and Detailed Day Inspection.", "Cambia al Modo Operativo (Horario) en la barra lateral para visualizar los Perfiles Horarios y el Detalle Diario."))
+                ax_wf.bar(labels[-1], curr_h, color=c_tot, width=0.6, zorder=3)
+                ax_wf.plot([len(values)-1.3, len(values)-0.7], [curr_h, curr_h], color='gray', linestyle='--', linewidth=0.8, alpha=0.7)
+                ax_wf.text(len(labels)-1, curr_h + (1 if curr_h>0 else -1), f"{curr_h:,.0f}", ha='center', va='bottom' if curr_h>0 else 'top', fontweight='bold', fontsize=12, color='#333333')
+                
+                style_card(ax_wf, "Unit Profit Breakdown (€/MWh)")
+                ax_wf.set_yticks([]); ax_wf.grid(axis='y', linestyle=':', color='gray', alpha=0.3)
+                plt.setp(ax_wf.get_xticklabels(), rotation=45, ha="right", fontsize=11, color='#555555')
+            
+            if not profit_total_data.empty:
+                colors = [c_pos if x >= 0 else c_neg for x in profit_total_data]
+                bars = ax_bar.barh(profit_total_data.index, profit_total_data, color=colors, zorder=3)
+                style_card(ax_bar, "Total Accumulated Profit (€)")
+                ax_bar.spines['bottom'].set_visible(False)
+                ax_bar.spines['left'].set_color('#cccccc')
+                ax_bar.set_xticks([])
+                ax_bar.set_yticks(range(len(profit_total_data)))
+                ax_bar.set_yticklabels(profit_total_data.index, fontsize=12, color='#444444', fontweight='medium')
+                ax_bar.tick_params(axis='y', length=0)
+                ax_bar.grid(axis='x', linestyle=':', color='gray', alpha=0.3)
+                
+                data_range = profit_total_data.max() - profit_total_data.min()
+                if data_range == 0: data_range = abs(profit_total_data.max()) or 100
+                pad = data_range * 0.02 
+                ax_bar.set_xlim(min(profit_total_data.min(), 0), max(profit_total_data.max(), 0) + (pad * 6))
+                
+                for rect in bars:
+                    width = rect.get_width()
+                    ax_bar.text(width + pad, rect.get_y() + rect.get_height()/2, f'{int(width):,}', ha='left', va='center', fontweight='bold', fontsize=11, color='#333333')
+                    
+            plt.subplots_adjust(wspace=0.4)
+            st.pyplot(fig2); plt.close(fig2)
+
+            # --- 3. DAILY PROFIT EVOLUTION ---
+            st.markdown(f"##### {t('Daily Profit Breakdown', 'Desglose Diario de Beneficio')}")
+            daily_data = up_hourly.groupby('Day')[cols_mkts].sum()
+            daily_data.columns = [PROFIT_MAP.get(c, c) for c in daily_data.columns]
+            daily_data.index = daily_data.index.strftime('%d/%m/%Y')
+            
+            fig5, ax5 = plt.subplots(figsize=(16, 6))
+            daily_data.plot(kind='bar', stacked=True, ax=ax5, colormap='tab20', width=0.8)
+            ax5.set_ylabel('Profit (€)', fontsize=12); ax5.set_xlabel('Date', fontsize=12)
+            ax5.grid(axis='y', linestyle='--', alpha=0.4)
+            ax5.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
+            ax5.legend(title='Market Breakdown', bbox_to_anchor=(1.01, 1), loc='upper left')
+            
+            n_days = len(daily_data)
+            if n_days > 20: 
+                step = max(1, n_days // 20)
+                ax5.set_xticks(range(0, n_days, step))
+                ax5.set_xticklabels(daily_data.index[::step], rotation=45, ha='right')
+            else:
+                plt.setp(ax5.get_xticklabels(), rotation=45, ha="right")
+            plt.tight_layout()
+            st.pyplot(fig5); plt.close(fig5)
+
+            # --- 4. SECCIÓN HORARIA (SÓLO SI IS_HOURLY) ---
+            if is_hourly:
+                st.markdown("---")
+                st.markdown(f"##### {t('Hourly Profiles Analysis', 'Análisis de Perfiles Horarios')}")
+                
+                hourly_prof_avg = up_hourly.groupby('hour')[['PBF', 'Energy_p48', 'Energy_i', 'Energy_tr', 'Energy_AASS']].mean()
+                up_hourly['datetime'] = pd.to_datetime(up_hourly['Day']) + pd.to_timedelta(up_hourly['hour'], unit='h')
+                hourly_prof_ts = up_hourly.set_index('datetime')[['PBF', 'Energy_p48', 'Energy_i', 'Energy_tr', 'Energy_AASS']].sort_index()
+
+                labels_prof = {'PBF': 'PBF', 'Energy_p48': 'Spot', 'Energy_i': 'Intra', 'Energy_tr': 'RT5', 'Energy_AASS': 'AASS'}
+                fig3, (ax_avg, ax_ts) = plt.subplots(2, 1, figsize=(16, 12))
+                
+                for col in labels_prof:
+                    if col in hourly_prof_avg.columns:
+                        style = '--' if 'PBF' in col else '-'
+                        color = 'red' if col == 'Energy_AASS' else None
+                        ax_avg.plot(hourly_prof_avg.index, hourly_prof_avg[col], label=labels_prof[col], ls=style, lw=1.5, color=color)
+                ax_avg.set_title(t('Average Hourly Dispatch Profile (MW)', 'Perfil de Despacho Horario Medio (MW)'), fontsize=14); ax_avg.legend(); ax_avg.grid(True, alpha=0.3)
+
+                for col in labels_prof:
+                    if col in hourly_prof_ts.columns:
+                        style = '--' if 'PBF' in col else '-'
+                        color = 'red' if col == 'Energy_AASS' else None
+                        ax_ts.plot(hourly_prof_ts.index, hourly_prof_ts[col], label=labels_prof[col], ls=style, lw=1, alpha=0.8, color=color)
+                ax_ts.set_title(t('Full Period Hourly Evolution (MW)', 'Evolución Horaria Periodo Completo (MW)'), fontsize=14); ax_ts.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig3); plt.close(fig3)
+                
+                # Detalle Diario
+                st.markdown(f"##### {t('Detailed Daily Inspection', 'Inspección Diaria Detallada')}")
+                col_d1, _ = st.columns([1, 2])
+                with col_d1:
+                    available_dates = up_hourly['Day'].dt.date.unique()
+                    input_detailed_date = st.date_input("Selecciona un día específico:", value=available_dates[0], min_value=min(available_dates), max_value=max(available_dates))
+                
+                if input_detailed_date:
+                    df_day = up_hourly[up_hourly['Day'].dt.date == input_detailed_date].copy()
+                    if not df_day.empty:
+                        day_hourly = df_day.groupby('hour')[cols_mkts].sum()
+                        day_hourly.columns = [PROFIT_MAP.get(c, c) for c in day_hourly.columns]
+                        
+                        fig4, ax4 = plt.subplots(figsize=(14, 6))
+                        day_hourly.plot(kind='bar', stacked=True, ax=ax4, colormap='tab20')
+                        ax4.set_title(f'Hourly Profit Breakdown: {input_detailed_date.strftime("%d/%m/%Y")}', fontsize=16, fontweight='bold', pad=15)
+                        ax4.set_ylabel('Profit (€)'); ax4.set_xlabel('Hour')
+                        ax4.grid(axis='y', alpha=0.3); ax4.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
+                        ax4.legend(bbox_to_anchor=(1.01, 1), loc='upper left')
+                        plt.tight_layout()
+                        st.pyplot(fig4); plt.close(fig4)
+                    else:
+                        st.info(f"No hay datos horarios para {input_detailed_date}")
+            else:
+                st.info(t("Switch to Operational Mode (Hourly) to see Hourly Profiles and Detailed Day Inspection.", "Cambia al Modo Operativo (Horario) en la barra lateral para visualizar los Perfiles Horarios y el Detalle Diario."))
 
     except Exception as e:
         st.error(f"{t('Error processing MRA:', 'Error procesando MRA:')} {e}")
@@ -487,7 +487,7 @@ elif is_hourly and seleccion_menu == name_rt5:
                 res_ma = pd.DataFrame({'Total Profit RT5': total_p_ma, '€/MWh_resource': eur_mwh_r_ma, 'Weighted Avg Bid': w_avg_bid_ma, 'Max Bid': filtered_rt5.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': filtered_rt5.groupby('MA', observed=True)['Price_RT5'].min()})
                 filtered_res_ma = res_ma.dropna(subset=['Min Bid']); filtered_res_ma = filtered_res_ma[filtered_res_ma['Min Bid'] < -50]
                 if filtered_res_ma.empty: st.info(t("No matches < -50€.", "Sin ofertas < -50€."))
-                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
+                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
 
             with col_rt_a2:
                 st.markdown(f"**{t('Specific Installations', 'Instalaciones Específicas (FCTRAV2, PEVER)')}**")
@@ -498,7 +498,7 @@ elif is_hourly and seleccion_menu == name_rt5:
                     eur_mwh_r_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, 'Max Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=['Min Bid'])
-                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
+                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
 
             if not filtered_res_ma.empty:
                 st.markdown("---")
@@ -628,7 +628,7 @@ elif seleccion_menu == name_verbund:
         df_final_v.insert(1, 'Installation', [val[0] for val in INPUT_DATA.values()] + ['Total'])
         
         cols_to_show = ['UP', 'Installation'] + [c for c in profit_cols_v if c in df_final_v.columns] + ['Total Profit', 'Profit Verbund', 'Profit Verbund / MW']
-        st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), use_container_width=True)
+        st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), width='stretch')
     except Exception as e: st.warning(f"Error Verbund: {e}")
     gc.collect()
 
@@ -644,7 +644,6 @@ elif seleccion_menu == name_evo:
         
         df_evo_temp = allh.loc[(allh['MA'] == ma_input) & (allh['Tech'] == tech_input)]
         
-        # Filtrado estricto: Solo mostramos UPs que hayan ganado algo en Ajustes (RT/Band/Tertiary)
         mask_active_ups = (df_evo_temp['Profit_rt'] != 0) | (df_evo_temp['Profit_b'] != 0) | (df_evo_temp['Profit_t'] != 0)
         ups_validas = df_evo_temp.loc[mask_active_ups, 'UP'].unique()
         
@@ -660,7 +659,6 @@ elif seleccion_menu == name_evo:
             df_evo_m['Profit_per_MWh'] = df_evo_m['Total_Profit'] / df_evo_m['Total_Energy'].replace(0, np.nan)
             df_evo_m['Total_Profit_k'] = df_evo_m['Total_Profit'] / 1000
 
-            # Blindaje extra para que Seaborn no colapse pintando demasiadas UPs
             if len(ups_validas) > 20:
                 st.warning(t("Showing top 20 UPs by Total Profit to avoid visual clutter.", "⚠️ Mostrando solo el Top 20 de UPs (por Beneficio Total) para evitar saturar el gráfico."))
                 top_ups = df_evo_m.groupby('UP', observed=True)['Total_Profit'].sum().nlargest(20).index
