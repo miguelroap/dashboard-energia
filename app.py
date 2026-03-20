@@ -130,7 +130,7 @@ df_power = load_power_data()
 if allh_full.empty:
     st.stop()
 
-# Blindaje de columnas numéricas (Añadidas las nuevas para MRA)
+# Blindaje de columnas numéricas
 allh_full['Day'] = pd.to_datetime(allh_full['Day'])
 cols_to_ensure = ['Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i',
                   'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i', 'Profit_p48', 'Energy_p48', 'PBF', 'Energy_RT1', 'Rev_tr', 'Rev_spot']
@@ -227,7 +227,7 @@ if seleccion_menu == name_main:
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 2: ANÁLISIS MRA (Con el nuevo código y gráficos)
+# SECCIÓN 2: ANÁLISIS MRA
 # ==============================================================================
 elif seleccion_menu == name_mra:
     st.markdown(f'<div class="section-title">{t("MRA Analysis - Technology - Installation", "Análisis MRA - Tecnología - Instalación")}</div>', unsafe_allow_html=True)
@@ -263,7 +263,6 @@ elif seleccion_menu == name_mra:
                               'Profit_se', 'Profit_b', 'Profit_i', 'Profit_tr', 'Profit_p48', 'Energy_tr', 
                               'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_i', 'Rev_spot']
         
-        # Asegurar columnas
         for c in numeric_cols_avail:
             if c not in up_df.columns: up_df[c] = 0.0
             
@@ -296,16 +295,14 @@ elif seleccion_menu == name_mra:
 
         df_table = up_summary[[group_col, '% P48 vs PBF', '% RT1 vs PBF', 'Profit_tr', 'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']].copy()
         df_table.columns = [group_col_name, '% P48 vs PBF', '% RT1 vs PBF', 'Real Time (€)', 'AASS (€)', 'Intras (€)', 'Intras (€/MWh)', 'AASS (€/MWh)']
-        
-        # Convertir Fechas a string si es necesario para evitar fallos
         df_table[group_col_name] = df_table[group_col_name].astype(str)
         
         st.dataframe(df_table.set_index(group_col_name).style.format({
             '% P48 vs PBF': '{:.1%}', '% RT1 vs PBF': '{:.1%}', 'Real Time (€)': '{:,.0f} €', 'AASS (€)': '{:,.0f} €', 
             'Intras (€)': '{:,.0f} €', 'Intras (€/MWh)': '{:.2f} €', 'AASS (€/MWh)': '{:.2f} €'
-        }), width='stretch')
+        }), use_container_width=True)
 
-        # --- 2. WATERFALL MEJORADO Y BARRAS (Economic Performance) ---
+        # --- 2. WATERFALL MEJORADO Y BARRAS ---
         st.markdown(f"##### {t('Economic Performance', 'Rendimiento Económico (Waterfall & Barras)')}")
         total_row = up_hourly[numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']].sum(numeric_only=True)
         energy_base = total_row.get('Energy_p48', 0) - total_row.get('Energy_tr', 0)
@@ -387,7 +384,7 @@ elif seleccion_menu == name_mra:
         plt.subplots_adjust(wspace=0.4)
         st.pyplot(fig2); plt.close(fig2)
 
-        # --- 3. DAILY PROFIT EVOLUTION (Stacked Bar) ---
+        # --- 3. DAILY PROFIT EVOLUTION ---
         st.markdown(f"##### {t('Daily Profit Breakdown', 'Desglose Diario de Beneficio')}")
         daily_data = up_hourly.groupby('Day')[cols_mkts].sum()
         daily_data.columns = [PROFIT_MAP.get(c, c) for c in daily_data.columns]
@@ -415,7 +412,6 @@ elif seleccion_menu == name_mra:
             st.markdown("---")
             st.markdown(f"##### {t('Hourly Profiles Analysis', 'Análisis de Perfiles Horarios')}")
             
-            # Profiles (Average & Full)
             hourly_prof_avg = up_hourly.groupby('hour')[['PBF', 'Energy_p48', 'Energy_i', 'Energy_tr', 'Energy_AASS']].mean()
             up_hourly['datetime'] = pd.to_datetime(up_hourly['Day']) + pd.to_timedelta(up_hourly['hour'], unit='h')
             hourly_prof_ts = up_hourly.set_index('datetime')[['PBF', 'Energy_p48', 'Energy_i', 'Energy_tr', 'Energy_AASS']].sort_index()
@@ -439,7 +435,7 @@ elif seleccion_menu == name_mra:
             plt.tight_layout()
             st.pyplot(fig3); plt.close(fig3)
             
-            # Detalle Diario Opcional
+            # Detalle Diario
             st.markdown(f"##### {t('Detailed Daily Inspection', 'Inspección Diaria Detallada')}")
             col_d1, _ = st.columns([1, 2])
             with col_d1:
@@ -491,7 +487,7 @@ elif is_hourly and seleccion_menu == name_rt5:
                 res_ma = pd.DataFrame({'Total Profit RT5': total_p_ma, '€/MWh_resource': eur_mwh_r_ma, 'Weighted Avg Bid': w_avg_bid_ma, 'Max Bid': filtered_rt5.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': filtered_rt5.groupby('MA', observed=True)['Price_RT5'].min()})
                 filtered_res_ma = res_ma.dropna(subset=['Min Bid']); filtered_res_ma = filtered_res_ma[filtered_res_ma['Min Bid'] < -50]
                 if filtered_res_ma.empty: st.info(t("No matches < -50€.", "Sin ofertas < -50€."))
-                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
+                else: st.dataframe(filtered_res_ma.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
 
             with col_rt_a2:
                 st.markdown(f"**{t('Specific Installations', 'Instalaciones Específicas (FCTRAV2, PEVER)')}**")
@@ -502,7 +498,7 @@ elif is_hourly and seleccion_menu == name_rt5:
                     eur_mwh_r_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, 'Max Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), 'Min Bid': up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=['Min Bid'])
-                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), width='stretch')
+                    st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', 'Max Bid': '{:.2f}', 'Min Bid': '{:.2f}'}), use_container_width=True)
 
             if not filtered_res_ma.empty:
                 st.markdown("---")
@@ -518,6 +514,7 @@ elif is_hourly and seleccion_menu == name_rt5:
                     sns.boxplot(data=df_graph, x='MA', y='Price_RT5', showfliers=False, palette='vlag', ax=ax_b)
                     ax_b.set_title("Boxplot: Price_RT5 matched by Market Agent", fontsize=10); ax_b.tick_params(axis='x', rotation=90); st.pyplot(fig_b); plt.close(fig_b)
     except Exception as e: st.error(f"Error Detalle RT5: {e}")
+    gc.collect()
 
 # ==============================================================================
 # SECCIÓN 4: ANÁLISIS GNERA
@@ -600,6 +597,7 @@ elif seleccion_menu == name_gnera:
                 st.info(t("Hourly charts (stack plots, lines) require Operational Mode to display.", "Los gráficos apilados y de líneas requieren el Modo Operativo (horario) para funcionar."))
 
     except Exception as e: st.error(f"Error Gnera: {e}")
+    gc.collect()
 
 # ==============================================================================
 # SECCIÓN 5: BENEFICIO VERBUND
@@ -630,11 +628,12 @@ elif seleccion_menu == name_verbund:
         df_final_v.insert(1, 'Installation', [val[0] for val in INPUT_DATA.values()] + ['Total'])
         
         cols_to_show = ['UP', 'Installation'] + [c for c in profit_cols_v if c in df_final_v.columns] + ['Total Profit', 'Profit Verbund', 'Profit Verbund / MW']
-        st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), width='stretch')
+        st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), use_container_width=True)
     except Exception as e: st.warning(f"Error Verbund: {e}")
+    gc.collect()
 
 # ==============================================================================
-# SECCIÓN 6: EVOLUCIÓN INGRESOS
+# SECCIÓN 6: EVOLUCIÓN INGRESOS (Con Filtro Estricto de UPs activas)
 # ==============================================================================
 elif seleccion_menu == name_evo:
     st.markdown(f'<div class="section-title">{t("Revenue Evolution by Market Agent and Technology", "Evolución Ingresos por Representante y Tecnología")}</div>', unsafe_allow_html=True)
@@ -643,27 +642,50 @@ elif seleccion_menu == name_evo:
         with col_e1: ma_input = st.selectbox(t("Market Agent (MA):", "Representante (MA):"), sorted(allh['MA'].unique()), index=list(sorted(allh['MA'].unique())).index('GALP') if 'GALP' in allh['MA'].unique() else 0)
         with col_e2: tech_input = st.selectbox(t("Technology (Tech):", "Tecnología (Tech):"), sorted(allh['Tech'].unique()), index=list(sorted(allh['Tech'].unique())).index('Wind') if 'Wind' in allh['Tech'].unique() else 0)
         
-        df_evo = allh.loc[(allh['MA'] == ma_input) & (allh['Tech'] == tech_input)].copy()
+        df_evo_temp = allh.loc[(allh['MA'] == ma_input) & (allh['Tech'] == tech_input)]
         
-        if df_evo.empty: st.info(t("No data for this combination.", "No hay datos para esta combinación."))
+        # Filtrado estricto: Solo mostramos UPs que hayan ganado algo en Ajustes (RT/Band/Tertiary)
+        mask_active_ups = (df_evo_temp['Profit_rt'] != 0) | (df_evo_temp['Profit_b'] != 0) | (df_evo_temp['Profit_t'] != 0)
+        ups_validas = df_evo_temp.loc[mask_active_ups, 'UP'].unique()
+        
+        df_evo = df_evo_temp.loc[df_evo_temp['UP'].isin(ups_validas)].copy()
+        
+        if df_evo.empty: 
+            st.info(t("No data for this combination (or no UPs with active profit in RT/Band/Tertiary).", "No hay datos para esta combinación (o ninguna UP tiene beneficios en RRTT, Banda o Terciaria)."))
         else:
             df_evo['YearMonth'] = df_evo['Day'].dt.to_period('M').astype(str)
             df_evo['Total_Profit'] = df_evo[['Profit_rt', 'Profit_tr_s', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se']].sum(axis=1)
+            
             df_evo_m = df_evo.groupby(['UP', 'YearMonth'], observed=True).agg(Total_Profit=('Total_Profit', 'sum'), Total_Energy=('Energy_p48', 'sum')).reset_index().sort_values('YearMonth')
             df_evo_m['Profit_per_MWh'] = df_evo_m['Total_Profit'] / df_evo_m['Total_Energy'].replace(0, np.nan)
             df_evo_m['Total_Profit_k'] = df_evo_m['Total_Profit'] / 1000
+
+            # Blindaje extra para que Seaborn no colapse pintando demasiadas UPs
+            if len(ups_validas) > 20:
+                st.warning(t("Showing top 20 UPs by Total Profit to avoid visual clutter.", "⚠️ Mostrando solo el Top 20 de UPs (por Beneficio Total) para evitar saturar el gráfico."))
+                top_ups = df_evo_m.groupby('UP', observed=True)['Total_Profit'].sum().nlargest(20).index
+                df_evo_m = df_evo_m[df_evo_m['UP'].isin(top_ups)]
 
             c_evo1, c_evo2, c_evo3 = st.columns(3)
             with c_evo1:
                 fig1, ax1 = plt.subplots(figsize=(6, 4))
                 sns.lineplot(data=df_evo_m, x='YearMonth', y='Profit_per_MWh', hue='UP', marker='o', ax=ax1)
-                ax1.set_title(t("Profit Evolution (€/MWh)", "Evolución Profit (€/MWh)"), fontsize=10); ax1.tick_params(axis='x', rotation=45); st.pyplot(fig1); plt.close(fig1)
+                ax1.set_title(t("Profit Evolution (€/MWh)", "Evolución Profit (€/MWh)"), fontsize=10); ax1.tick_params(axis='x', rotation=45)
+                ax1.legend(title='', fontsize=6, loc='best')
+                st.pyplot(fig1); plt.close(fig1)
             with c_evo2:
                 fig2, ax2 = plt.subplots(figsize=(6, 4))
                 sns.lineplot(data=df_evo_m, x='YearMonth', y='Total_Energy', hue='UP', marker='o', ax=ax2)
-                ax2.set_title(t("Production (MWh)", "Producción (MWh)"), fontsize=10); ax2.tick_params(axis='x', rotation=45); st.pyplot(fig2); plt.close(fig2)
+                ax2.set_title(t("Production (MWh)", "Producción (MWh)"), fontsize=10); ax2.tick_params(axis='x', rotation=45)
+                ax2.legend(title='', fontsize=6, loc='best')
+                st.pyplot(fig2); plt.close(fig2)
             with c_evo3:
                 fig3, ax3 = plt.subplots(figsize=(6, 4))
                 sns.lineplot(data=df_evo_m, x='YearMonth', y='Total_Profit_k', hue='UP', marker='o', ax=ax3)
-                ax3.set_title(t("Total Profit (k€)", "Profit Total (k€)"), fontsize=10); ax3.tick_params(axis='x', rotation=45); st.pyplot(fig3); plt.close(fig3)
-    except Exception as e: st.warning(f"Error Evolución: {e}")
+                ax3.set_title(t("Total Profit (k€)", "Profit Total (k€)"), fontsize=10); ax3.tick_params(axis='x', rotation=45)
+                ax3.legend(title='', fontsize=6, loc='best')
+                st.pyplot(fig3); plt.close(fig3)
+            
+    except Exception as e:
+        st.warning(f"{t('Error processing evolution charts:', 'Error procesando gráficos de evolución:')} {e}")
+    gc.collect()
