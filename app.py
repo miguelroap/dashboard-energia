@@ -51,10 +51,10 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-# --- CARGA DE DATOS OPTIMIZADA ---
 # --- CARGA DE DATOS OPTIMIZADA (HISTÓRICO 2025) ---
 @st.cache_data
 def load_allh_data():
+    import os
     try:
         cols_needed = ['UP', 'MA', 'Tech', 'Day', 'hour', 'PBF', 'Energy_p48', 'Energy_RT1',
                        'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i',
@@ -63,40 +63,36 @@ def load_allh_data():
         
         import pyarrow.parquet as pq
         
-        # Generamos la lista de meses: desde '012025' hasta '112025'
-        meses = [f"{str(m).zfill(2)}2025" for m in range(1, 12)]
+        # Generamos la lista de meses: desde '012025' hasta '122025' (todo el año)
+        meses = [f"{str(m).zfill(2)}2025" for m in range(1, 13)]
         df_list = []
         
-        # Bucle para buscar y cargar las dos partes de cada mes
         for mes in meses:
             for part in ['part1', 'part2']:
                 filename = f'allh_{mes}_{part}.parquet'
-                try:
-                    # Leemos el esquema del archivo para cargar solo lo necesario (ahorro de RAM)
-                    schema = pq.read_schema(filename)
-                    cols_to_load = [c for c in cols_needed if c in schema.names]
-                    
-                    # Leemos el archivo y lo añadimos a la lista
-                    df_temp = pd.read_parquet(filename, columns=cols_to_load)
-                    df_list.append(df_temp)
-                except FileNotFoundError:
-                    # Si el archivo de un mes aún no está subido en GitHub, lo salta en silencio
-                    pass
-                except Exception as e:
-                    # Si hay un error distinto (archivo corrupto, etc.), lo imprime en la consola
-                    print(f"Error leyendo {filename}: {e}")
+                
+                # Comprobamos físicamente si el archivo existe en GitHub
+                if os.path.exists(filename):
+                    try:
+                        schema = pq.read_schema(filename)
+                        cols_to_load = [c for c in cols_needed if c in schema.names]
+                        
+                        df_temp = pd.read_parquet(filename, columns=cols_to_load)
+                        df_list.append(df_temp)
+                    except Exception as e:
+                        # Si el archivo existe pero está roto, nos avisa en pantalla
+                        st.warning(f"⚠️ El archivo {filename} existe, pero está corrupto o dio error: {e}")
 
-        # Si no encontró ningún archivo, devuelve DataFrame vacío
         if not df_list:
+            st.error(f"❌ No se encontró ningún archivo .parquet de 2025. Comprueba que se llamen exactamente 'allh_012025_part1.parquet'.")
             return pd.DataFrame()
             
-        # Une todos los meses en una sola macro-tabla
         return pd.concat(df_list, ignore_index=True)
         
     except Exception as e:
         st.error(f"{t('Critical error loading parquet files:', 'Error crítico cargando archivos parquet:')} {e}")
         return pd.DataFrame()
-
+        
 @st.cache_data
 def load_power_data():
     try:
