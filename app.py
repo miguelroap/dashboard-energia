@@ -283,28 +283,7 @@ elif seleccion_menu == name_mra:
             cols_mkts = ['Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i', 'Profit_tr']
             up_hourly['Profit_total'] = up_hourly[cols_mkts].sum(axis=1)
 
-            st.markdown(f"##### {t('Performance Summary', 'Resumen de Rendimiento (Performance Summary)')}")
-            date_range_days = (up_hourly['Day'].max() - up_hourly['Day'].min()).days
-            group_col = 'Day' if date_range_days <= 10 else 'Year_Month'
-            group_col_name = 'Date' if group_col == 'Day' else 'Month'
-            
-            up_summary = up_hourly.groupby([group_col], observed=True)[['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_AASS', 'Profit_tr', 'Profit_i']].sum(numeric_only=True).reset_index()
-            
-            up_summary['% P48 vs PBF'] = up_summary['Energy_p48'] / up_summary['PBF'].replace(0, np.nan)
-            up_summary['% RT1 vs PBF'] = -up_summary['Energy_RT1'] / up_summary['PBF'].replace(0, np.nan)
-            up_summary['Intras €/MWh'] = up_summary['Profit_i'] / up_summary['Energy_p48'].replace(0, np.nan)
-            up_summary['AASS €/MWh'] = up_summary['Profit_AASS'] / up_summary['Energy_p48'].replace(0, np.nan)
-
-            df_table = up_summary[[group_col, '% P48 vs PBF', '% RT1 vs PBF', 'Profit_tr', 'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']].copy()
-            df_table.columns = [group_col_name, '% P48 vs PBF', '% RT1 vs PBF', 'Real Time (€)', 'AASS (€)', 'Intras (€)', 'Intras (€/MWh)', 'AASS (€/MWh)']
-            df_table[group_col_name] = df_table[group_col_name].astype(str)
-            
-            st.dataframe(df_table.set_index(group_col_name).style.format({
-                '% P48 vs PBF': '{:.1%}', '% RT1 vs PBF': '{:.1%}', 'Real Time (€)': '{:,.0f} €', 'AASS (€)': '{:,.0f} €', 
-                'Intras (€)': '{:,.0f} €', 'Intras (€/MWh)': '{:.2f} €', 'AASS (€/MWh)': '{:.2f} €'
-            }), width='stretch')
-
-            # --- WATERFALL Y BARRAS ---
+            # --- 1. WATERFALL Y BARRAS ---
             st.markdown(f"##### {t('Economic Performance', 'Rendimiento Económico (Waterfall & Barras)')}")
             cols_for_total = list(set(numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']))
             cols_for_total = [c for c in cols_for_total if c in up_hourly.columns]
@@ -390,7 +369,7 @@ elif seleccion_menu == name_mra:
             plt.subplots_adjust(wspace=0.4)
             st.pyplot(fig2); plt.close(fig2)
 
-            # --- DAILY PROFIT EVOLUTION ---
+            # --- 2. DAILY PROFIT EVOLUTION ---
             st.markdown(f"##### {t('Daily Profit Breakdown', 'Desglose Diario de Beneficio')}")
             daily_data = up_hourly.groupby('Day')[cols_mkts].sum()
             daily_data.columns = [PROFIT_MAP.get(c, c) for c in daily_data.columns]
@@ -413,7 +392,7 @@ elif seleccion_menu == name_mra:
             plt.tight_layout()
             st.pyplot(fig5); plt.close(fig5)
 
-            # --- SECCIÓN HORARIA ---
+            # --- 3. SECCIÓN HORARIA (SÓLO SI IS_HOURLY) ---
             if is_hourly:
                 st.markdown("---")
                 st.markdown(f"##### {t('Hourly Profiles Analysis', 'Análisis de Perfiles Horarios')}")
@@ -467,12 +446,35 @@ elif seleccion_menu == name_mra:
             else:
                 st.info(t("Switch to Operational Mode (Hourly) to see Hourly Profiles and Detailed Day Inspection.", "Cambia al Modo Operativo (Horario) en la barra lateral para visualizar los Perfiles Horarios y el Detalle Diario."))
 
+            # --- 4. TABLA RESUMEN NATIVA (Movida al final) ---
+            st.markdown("---")
+            st.markdown(f"##### {t('Performance Summary', 'Resumen de Rendimiento (Performance Summary)')}")
+            date_range_days = (up_hourly['Day'].max() - up_hourly['Day'].min()).days
+            group_col = 'Day' if date_range_days <= 10 else 'Year_Month'
+            group_col_name = 'Date' if group_col == 'Day' else 'Month'
+            
+            up_summary = up_hourly.groupby([group_col], observed=True)[['PBF', 'Energy_p48', 'Energy_RT1', 'Profit_AASS', 'Profit_tr', 'Profit_i']].sum(numeric_only=True).reset_index()
+            
+            up_summary['% P48 vs PBF'] = up_summary['Energy_p48'] / up_summary['PBF'].replace(0, np.nan)
+            up_summary['% RT1 vs PBF'] = -up_summary['Energy_RT1'] / up_summary['PBF'].replace(0, np.nan)
+            up_summary['Intras €/MWh'] = up_summary['Profit_i'] / up_summary['Energy_p48'].replace(0, np.nan)
+            up_summary['AASS €/MWh'] = up_summary['Profit_AASS'] / up_summary['Energy_p48'].replace(0, np.nan)
+
+            df_table = up_summary[[group_col, '% P48 vs PBF', '% RT1 vs PBF', 'Profit_tr', 'Profit_AASS', 'Profit_i', 'Intras €/MWh', 'AASS €/MWh']].copy()
+            df_table.columns = [group_col_name, '% P48 vs PBF', '% RT1 vs PBF', 'Real Time (€)', 'AASS (€)', 'Intras (€)', 'Intras (€/MWh)', 'AASS (€/MWh)']
+            df_table[group_col_name] = df_table[group_col_name].astype(str)
+            
+            st.dataframe(df_table.set_index(group_col_name).style.format({
+                '% P48 vs PBF': '{:.1%}', '% RT1 vs PBF': '{:.1%}', 'Real Time (€)': '{:,.0f} €', 'AASS (€)': '{:,.0f} €', 
+                'Intras (€)': '{:,.0f} €', 'Intras (€/MWh)': '{:.2f} €', 'AASS (€/MWh)': '{:.2f} €'
+            }), width='stretch')
+
     except Exception as e:
         st.error(f"{t('Error processing MRA:', 'Error procesando MRA:')} {e}")
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 3: DETALLE RT5 (Funciona en Diario y Horario)
+# SECCIÓN 3: DETALLE RT5 
 # ==============================================================================
 elif seleccion_menu == name_rt5:
     st.markdown(f'<div class="section-title">{t("RT5 Detail: Prices & Offers", "Detalle RT5: Precios y Ofertas")}</div>', unsafe_allow_html=True)
@@ -500,7 +502,6 @@ elif seleccion_menu == name_rt5:
                 if is_hourly:
                     filtered_res_ma = filtered_res_ma[filtered_res_ma[min_name] < -50]
                 
-                # Ordenar de mayor a menor por Total Profit
                 filtered_res_ma = filtered_res_ma.sort_values(by='Total Profit RT5', ascending=False)
                     
                 if filtered_res_ma.empty: st.info(t("No matches.", "Sin ofertas en este rango."))
@@ -516,12 +517,10 @@ elif seleccion_menu == name_rt5:
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, max_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), min_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=[min_name])
                     
-                    # Ordenar de mayor a menor también aquí
                     res_v = res_v.sort_values(by='Total Profit RT5', ascending=False)
-                    
                     st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', max_name: '{:.2f}', min_name: '{:.2f}'}), width='stretch')
 
-            # --- NUEVOS GRÁFICOS: TOP 10 MA POR TECNOLOGÍA ---
+            # --- GRÁFICOS: TOP 10 MA POR TECNOLOGÍA ---
             st.markdown("---")
             st.markdown(f"##### {t('Top 10 Market Agents by Total Profit RT5', 'Top 10 Representantes por Beneficio Total RT5')}")
             
@@ -543,8 +542,6 @@ elif seleccion_menu == name_rt5:
                     ax.axis('off')
                     return
                 
-                # --- LA CORRECCIÓN CLAVE ---
-                # Forzamos a string para que Seaborn olvide las categorías vacías
                 top10['MA'] = top10['MA'].astype(str)
                 
                 sns.barplot(data=top10, x='MA', y='Profit_tr_s', palette=color_palette, ax=ax)
@@ -572,7 +569,7 @@ elif seleccion_menu == name_rt5:
                 plot_top10(filtered_rt5, 'Wind', ax_tw, 'Greens_r')
                 st.pyplot(fig_tw); plt.close(fig_tw)
 
-            # --- NUEVOS GRÁFICOS: EVOLUCIÓN RT5 POR TECNOLOGÍA ---
+            # --- GRÁFICOS: EVOLUCIÓN RT5 POR TECNOLOGÍA ---
             st.markdown("---")
             st.markdown(f"##### {t('RT5 Profit Evolution (All Market Agents)', 'Evolución de Ingresos RT5 (Todos los Representantes)')}")
             
@@ -761,7 +758,20 @@ elif seleccion_menu == name_verbund:
         df_final_v = pd.concat([df_agg_v, pd.DataFrame([totales])], ignore_index=True)
         df_final_v.insert(1, 'Installation', [val[0] for val in INPUT_DATA.values()] + ['Total'])
         
-        cols_to_show = ['UP', 'Installation'] + [c for c in profit_cols_v if c in df_final_v.columns] + ['Total Profit', 'Profit Verbund', 'Profit Verbund / MW']
+        # Diccionario para renombrar las columnas en la vista final
+        rename_dict = {
+            'Profit_rt': 'Profit RT F2', 
+            'Profit_tr_s': 'RT5', 
+            'Profit_t': 'Tertiary', 
+            'Profit_rr': 'RR', 
+            'Profit_b': 'Secondary band', 
+            'Profit_se': 'Secondary Activation', 
+            'Profit_i': 'Intraday'
+        }
+        df_final_v = df_final_v.rename(columns=rename_dict)
+        renamed_cols = [rename_dict.get(c, c) for c in profit_cols_v]
+        
+        cols_to_show = ['UP', 'Installation'] + [c for c in renamed_cols if c in df_final_v.columns] + ['Total Profit', 'Profit Verbund', 'Profit Verbund / MW']
         st.dataframe(df_final_v[cols_to_show].style.format({c: "{:,.2f} €" for c in cols_to_show[2:]}), width='stretch')
     except Exception as e: st.warning(f"Error Verbund: {e}")
     gc.collect()
