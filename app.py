@@ -22,11 +22,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- IDIOMA (BILINGÜE) ---
-lang = st.sidebar.radio("🌐 Language / Idioma", ["English", "Español"])
+# ==============================================================================
+# REORDENACIÓN DEL SIDEBAR CON CONTENEDORES
+# ==============================================================================
+# Creamos "huecos" visuales en el orden exacto que has pedido
+cont_date = st.sidebar.container()
+st.sidebar.markdown("---")
+cont_nav = st.sidebar.container()
+st.sidebar.markdown("---")
+cont_mode = st.sidebar.container()
+st.sidebar.markdown("---")
+cont_lang = st.sidebar.container()
+
+# 4. IDIOMA (Se ejecuta lógico primero para tener la función de traducción, pero se pinta el último)
+lang = cont_lang.radio("🌐 Language / Idioma", ["English", "Español"])
 
 def t(en, es):
     return en if lang == "English" else es
+
+if cont_lang.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recargar Datos")):
+    st.cache_data.clear()
+    st.rerun()
 
 # --- SISTEMA DE CONTRASEÑA ---
 def check_password():
@@ -56,21 +72,13 @@ if not check_password():
 
 st.title(t("📊 Performance Analysis: Ancillary & Intraday Markets", "📊 Análisis de Desempeño: Mercados de Ajuste e Intradiarios"))
 
-if st.sidebar.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recargar Datos")):
-    st.cache_data.clear()
-    st.rerun()
-
-st.sidebar.markdown("---")
-
-# ==============================================================================
-# INTERRUPTOR MAESTRO Y CARGA DE DATOS (ARQUITECTURA DUAL)
-# ==============================================================================
+# 3. ANALYSIS MODE (Y Selector de Meses)
+cont_mode.header(t("🔍 Analysis Mode", "🔍 Modo de Análisis"))
 modo_opciones = [
     t("📅 Strategic Mode (Daily - Full Year)", "📅 Modo Estratégico (Diario - Año Completo)"),
     t("⏱️ Operational Mode (Hourly - 1 Month)", "⏱️ Modo Operativo (Horario - 1 Mes)")
 ]
-modo_app = st.sidebar.radio(t("🔍 Analysis Mode:", "🔍 Modo de Análisis:"), modo_opciones)
-
+modo_app = cont_mode.radio("Modo", modo_opciones, label_visibility="collapsed")
 is_hourly = (modo_app == modo_opciones[1])
 
 # --- FUNCIONES DE CARGA ---
@@ -119,8 +127,7 @@ if is_hourly:
         st.stop()
         
     meses_formateados = {m: f"{m[:2]}/{m[2:]}" for m in meses_disponibles}
-    selected_month = st.sidebar.selectbox(t("Select month:", "Selecciona el mes a cargar:"), options=meses_disponibles, format_func=lambda x: meses_formateados.get(x, x), index=len(meses_disponibles)-1)
-    
+    selected_month = cont_mode.selectbox(t("Select month:", "Selecciona el mes a cargar:"), options=meses_disponibles, format_func=lambda x: meses_formateados.get(x, x), index=len(meses_disponibles)-1)
     allh_full = load_hourly_data(selected_month)
 else:
     allh_full = load_daily_data()
@@ -130,32 +137,26 @@ df_power = load_power_data()
 if allh_full.empty:
     st.stop()
 
-# Blindaje de columnas numéricas
+# Blindaje de columnas
 allh_full['Day'] = pd.to_datetime(allh_full['Day'])
 cols_to_ensure = ['Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i',
                   'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i', 'Profit_p48', 'Energy_p48', 'PBF', 'Energy_RT1', 'Rev_tr', 'Rev_spot']
 for col in cols_to_ensure:
     if col not in allh_full.columns: allh_full[col] = 0.0
     else: allh_full[col] = pd.to_numeric(allh_full[col], errors='coerce').fillna(0)
-
 gc.collect()
 
-# --- FILTRO DE FECHAS (GLOBAL) ---
-st.sidebar.markdown("---")
-st.sidebar.header(t("📅 Date Range", "📅 Rango de Fechas"))
+# 1. RANGO DE FECHAS (Ahora que los datos están cargados, lo mandamos al contenedor de arriba)
+cont_date.header(t("📅 Date Range", "📅 Rango de Fechas"))
 min_date, max_date = allh_full['Day'].min().date(), allh_full['Day'].max().date()
-selected_dates = st.sidebar.date_input(t("Select period:", "Selecciona periodo:"), value=(min_date, max_date), min_value=min_date, max_value=max_date)
+selected_dates = cont_date.date_input(t("Select period:", "Selecciona periodo:"), value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (min_date, max_date)
 allh = allh_full.loc[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'].dt.date <= end_date)]
 gc.collect()
 
-# ==============================================================================
-# MENÚ DE NAVEGACIÓN DINÁMICO Y A PRUEBA DE FALLOS
-# ==============================================================================
-st.sidebar.markdown("---")
-st.sidebar.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
-
+# 2. MENÚ DE NAVEGACIÓN
+cont_nav.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
 name_main = t("📈 Main Overview", "📈 Resumen Principal")
 name_mra = t("⚡ MRA Analysis", "⚡ Análisis MRA")
 name_rt5 = t("📋 RT5 Detail", "📋 Detalle RT5")
@@ -164,11 +165,10 @@ name_verbund = t("💶 Verbund Profit", "💶 Beneficio Verbund")
 name_evo = t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 
 menu_options = [name_main, name_mra, name_gnera, name_verbund, name_evo]
-
 if is_hourly:
     menu_options.insert(2, name_rt5)
 
-seleccion_menu = st.sidebar.radio("Menu", menu_options, label_visibility="collapsed")
+seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
 # SECCIÓN 1: RESUMEN PRINCIPAL
@@ -232,6 +232,16 @@ if seleccion_menu == name_main:
 elif seleccion_menu == name_mra:
     st.markdown(f'<div class="section-title">{t("MRA Analysis - Technology - Installation", "Análisis MRA - Tecnología - Instalación")}</div>', unsafe_allow_html=True)
     try:
+        # 1. Filtro estricto añadido en MRA
+        only_qualified = st.checkbox(t("Only qualified in Ancillary Services (RRTT, Sec. Band, Tertiary)", "Solo cualificadas en Servicios de Ajuste (RRTT, Banda Sec., Terciaria)"), value=True)
+        
+        if only_qualified:
+            mask_active_mra = (allh['Profit_rt'] != 0) | (allh['Profit_b'] != 0) | (allh['Profit_t'] != 0)
+            valid_ups_mra = allh.loc[mask_active_mra, 'UP'].unique()
+            allh_mra = allh.loc[allh['UP'].isin(valid_ups_mra)]
+        else:
+            allh_mra = allh
+
         PROFIT_MAP = {
             'Profit_rt': 'RRTT F2', 'Profit_tr': 'RT5', 'Profit_tr_s': 'RT5_strategy',
             'Profit_t': 'Tertiary', 'Profit_rr': 'RR', 'Profit_b': 'Sec. Band',
@@ -240,19 +250,18 @@ elif seleccion_menu == name_mra:
 
         f_ma, f_tech, f_up = st.columns(3)
         with f_ma:
-            ma_mask = (allh['Profit_rt']!=0)|(allh['Profit_b']!=0)|(allh['Profit_t']!=0)|(allh['Profit_rr']!=0)
-            qualified_MAs = sorted(allh[ma_mask]['MA'].unique()) if not allh[ma_mask].empty else [t('No data', 'Sin datos')]
+            qualified_MAs = sorted(allh_mra['MA'].unique()) if not allh_mra.empty else [t('No data', 'Sin datos')]
             sel_ma = st.selectbox(t("1. Market Agent (MA)", "1. Representante (MA)"), qualified_MAs)
         with f_tech:
-            tech_opts = sorted(allh[allh['MA'] == sel_ma]['Tech'].unique()) if sel_ma != t('No data', 'Sin datos') else [t('No data', 'Sin datos')]
+            tech_opts = sorted(allh_mra.loc[allh_mra['MA'] == sel_ma, 'Tech'].unique()) if sel_ma != t('No data', 'Sin datos') else [t('No data', 'Sin datos')]
             sel_tech = st.selectbox(t("2. Technology", "2. Tecnología"), tech_opts)
         with f_up:
-            up_rt5 = allh.loc[(allh['MA']==sel_ma) & (allh['Tech']==sel_tech)]
-            up_opts = [t('Any UP', 'Cualquier UP')] + sorted(up_rt5[(up_rt5['Profit_rt']!=0)|(up_rt5['Profit_b']!=0)]['UP'].unique().tolist())
+            up_rt5 = allh_mra.loc[(allh_mra['MA']==sel_ma) & (allh_mra['Tech']==sel_tech)]
+            up_opts = [t('Any UP', 'Cualquier UP')] + sorted(up_rt5['UP'].unique().tolist())
             sel_up = st.selectbox(t("3. Production Unit (UP)", "3. Unidad (UP)"), up_opts)
 
-        if sel_up == t('Any UP', 'Cualquier UP'): up_df = allh.loc[allh['UP'].isin(up_rt5['UP'].unique())].copy()
-        else: up_df = allh.loc[allh['UP'] == sel_up].copy()
+        if sel_up == t('Any UP', 'Cualquier UP'): up_df = allh_mra.loc[allh_mra['UP'].isin(up_rt5['UP'].unique())].copy()
+        else: up_df = allh_mra.loc[allh_mra['UP'] == sel_up].copy()
             
         if up_df.empty:
             st.warning(t("No data available.", "No hay datos disponibles para la combinación seleccionada."))
@@ -302,8 +311,6 @@ elif seleccion_menu == name_mra:
 
             # --- WATERFALL Y BARRAS ---
             st.markdown(f"##### {t('Economic Performance', 'Rendimiento Económico (Waterfall & Barras)')}")
-            
-            # FIX DEL BUG 1: Usar set() para eliminar columnas repetidas antes de sumar
             cols_for_total = list(set(numeric_cols_avail + cols_mkts + ['Profit_p48', 'Profit_total']))
             cols_for_total = [c for c in cols_for_total if c in up_hourly.columns]
             
@@ -668,7 +675,6 @@ elif seleccion_menu == name_evo:
                 top_ups = df_evo_m.groupby('UP', observed=True)['Total_Profit'].sum().nlargest(20).index
                 df_evo_m = df_evo_m[df_evo_m['UP'].isin(top_ups)]
 
-            # FIX DEL BUG 2: Forzamos UP a texto para borrar la memoria de categorías vacías en Seaborn
             df_evo_m['UP'] = df_evo_m['UP'].astype(str)
 
             c_evo1, c_evo2, c_evo3 = st.columns(3)
