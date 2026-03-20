@@ -441,6 +441,7 @@ elif seleccion_menu == name_mra:
                 plt.tight_layout()
                 st.pyplot(fig3); plt.close(fig3)
                 
+                # Detalle Diario
                 st.markdown(f"##### {t('Detailed Daily Inspection', 'Inspección Diaria Detallada')}")
                 col_d1, _ = st.columns([1, 2])
                 with col_d1:
@@ -499,7 +500,6 @@ elif seleccion_menu == name_rt5:
                 if is_hourly:
                     filtered_res_ma = filtered_res_ma[filtered_res_ma[min_name] < -50]
                 
-                # Ordenar de mayor a menor por Total Profit
                 filtered_res_ma = filtered_res_ma.sort_values(by='Total Profit RT5', ascending=False)
                     
                 if filtered_res_ma.empty: st.info(t("No matches.", "Sin ofertas en este rango."))
@@ -515,39 +515,117 @@ elif seleccion_menu == name_rt5:
                     w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(lambda x: (x['Price_RT5'] * x['Energy_tr']).sum() / x['Energy_tr'].sum()).replace([np.inf, -np.inf], 0).fillna(0)
                     res_v = pd.DataFrame({'Total Profit RT5': up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(), '€/MWh_resource': eur_mwh_r_v, 'Weighted Avg Bid': w_avg_bid_v, max_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(), min_name: up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()}).dropna(subset=[min_name])
                     
-                    # Ordenar de mayor a menor también aquí
                     res_v = res_v.sort_values(by='Total Profit RT5', ascending=False)
-                    
                     st.dataframe(res_v.style.format({'Total Profit RT5': '{:,.2f} €', '€/MWh_resource': '{:.2f}', 'Weighted Avg Bid': '{:.2f}', max_name: '{:.2f}', min_name: '{:.2f}'}), width='stretch')
 
-            # --- NUEVO GRÁFICO: TOP 10 MA ---
-            if not filtered_res_ma.empty:
-                st.markdown("---")
-                st.markdown(f"##### {t('Top 10 Market Agents by Total Profit RT5', 'Top 10 Representantes por Beneficio Total RT5')}")
+            # --- NUEVOS GRÁFICOS: TOP 10 MA POR TECNOLOGÍA ---
+            st.markdown("---")
+            st.markdown(f"##### {t('Top 10 Market Agents by Total Profit RT5', 'Top 10 Representantes por Beneficio Total RT5')}")
+            
+            col_top_s, col_top_w = st.columns(2)
+            
+            def plot_top10(df, tech, ax, color_palette):
+                df_t = df[df['Tech'] == tech]
+                if df_t.empty:
+                    ax.text(0.5, 0.5, t("No data", "Sin datos"), ha='center', va='center')
+                    ax.axis('off')
+                    return
                 
-                top_10_ma = filtered_res_ma.head(10).reset_index()
+                ma_profit = df_t.groupby('MA', observed=True)['Profit_tr_s'].sum().reset_index()
+                top10 = ma_profit.nlargest(10, 'Profit_tr_s')
+                top10 = top10[top10['Profit_tr_s'] > 0] 
                 
-                fig_top10, ax_top10 = plt.subplots(figsize=(12, 5))
-                sns.barplot(data=top_10_ma, x='MA', y='Total Profit RT5', palette='viridis', ax=ax_top10)
-                ax_top10.set_ylabel('Total Profit RT5 (€)', fontsize=10)
-                ax_top10.set_xlabel('', fontsize=10)
-                ax_top10.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
-                ax_top10.tick_params(axis='x', rotation=45)
+                if top10.empty:
+                    ax.text(0.5, 0.5, t("No data", "Sin datos"), ha='center', va='center')
+                    ax.axis('off')
+                    return
                 
-                for p in ax_top10.patches:
-                    ax_top10.annotate(f"{int(p.get_height()):,}", 
-                                      (p.get_x() + p.get_width() / 2., p.get_height()), 
-                                      ha='center', va='bottom', 
-                                      fontsize=9, color='black', xytext=(0, 5), 
-                                      textcoords='offset points')
+                sns.barplot(data=top10, x='MA', y='Profit_tr_s', palette=color_palette, ax=ax)
+                ax.set_title(f"{tech}", fontsize=12)
+                ax.set_ylabel('Total Profit RT5 (€)', fontsize=10)
+                ax.set_xlabel('', fontsize=10)
+                ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
+                ax.tick_params(axis='x', rotation=45)
+                
+                for p in ax.patches:
+                    if p.get_height() > 0:
+                        ax.annotate(f"{int(p.get_height()):,}", 
+                                    (p.get_x() + p.get_width() / 2., p.get_height()), 
+                                    ha='center', va='bottom', 
+                                    fontsize=9, color='black', xytext=(0, 5), 
+                                    textcoords='offset points')
 
-                st.pyplot(fig_top10)
-                plt.close(fig_top10)
+            with col_top_s:
+                fig_ts, ax_ts = plt.subplots(figsize=(8, 5))
+                plot_top10(filtered_rt5, 'Solar PV', ax_ts, 'YlOrRd_r')
+                st.pyplot(fig_ts); plt.close(fig_ts)
 
-            # --- GRÁFICOS DETALLADOS ---
+            with col_top_w:
+                fig_tw, ax_tw = plt.subplots(figsize=(8, 5))
+                plot_top10(filtered_rt5, 'Wind', ax_tw, 'Greens_r')
+                st.pyplot(fig_tw); plt.close(fig_tw)
+
+            # --- NUEVOS GRÁFICOS: EVOLUCIÓN RT5 POR TECNOLOGÍA ---
+            st.markdown("---")
+            st.markdown(f"##### {t('RT5 Profit Evolution (All Market Agents)', 'Evolución de Ingresos RT5 (Todos los Representantes)')}")
+            
+            col_evo_s, col_evo_w = st.columns(2)
+            
+            date_range_days = (filtered_rt5['Day'].max() - filtered_rt5['Day'].min()).days
+            if pd.isna(date_range_days): date_range_days = 0
+            
+            time_col = 'Day_str' if date_range_days <= 60 else 'YearMonth'
+            
+            if time_col == 'YearMonth':
+                filtered_rt5['YearMonth'] = filtered_rt5['Day'].dt.to_period('M').astype(str)
+            else:
+                filtered_rt5['Day_str'] = filtered_rt5['Day'].dt.strftime('%d/%m/%Y')
+            
+            def plot_evo(df, tech, ax, color):
+                df_t = df[df['Tech'] == tech]
+                if df_t.empty:
+                    ax.text(0.5, 0.5, t("No data", "Sin datos"), ha='center', va='center')
+                    ax.axis('off')
+                    return
+                    
+                evo_data = df_t.groupby(time_col, observed=True)['Profit_tr_s'].sum().reset_index()
+                
+                if time_col == 'Day_str':
+                    evo_data['SortKey'] = pd.to_datetime(evo_data[time_col], format='%d/%m/%Y')
+                    evo_data = evo_data.sort_values('SortKey')
+                else:
+                    evo_data = evo_data.sort_values(time_col)
+                    
+                sns.lineplot(data=evo_data, x=time_col, y='Profit_tr_s', marker='o', color=color, ax=ax)
+                ax.set_title(f"{tech}", fontsize=12)
+                ax.set_ylabel('Total Profit RT5 (€)', fontsize=10)
+                ax.set_xlabel('', fontsize=10)
+                ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',')))
+                ax.grid(True, alpha=0.3)
+                
+                n_points = len(evo_data)
+                if n_points > 15:
+                    step = max(1, n_points // 15)
+                    ax.set_xticks(range(0, n_points, step))
+                    ax.set_xticklabels(evo_data[time_col].iloc[::step], rotation=45, ha='right')
+                else:
+                    ax.tick_params(axis='x', rotation=45)
+
+            with col_evo_s:
+                fig_es, ax_es = plt.subplots(figsize=(8, 5))
+                plot_evo(filtered_rt5, 'Solar PV', ax_es, 'orange')
+                st.pyplot(fig_es); plt.close(fig_es)
+
+            with col_evo_w:
+                fig_ew, ax_ew = plt.subplots(figsize=(8, 5))
+                plot_evo(filtered_rt5, 'Wind', ax_ew, 'green')
+                st.pyplot(fig_ew); plt.close(fig_ew)
+
+            # --- GRÁFICOS DETALLADOS (HORARIOS) ---
             if is_hourly:
                 if not filtered_res_ma.empty:
                     st.markdown("---")
+                    st.markdown(f"##### {t('Individual Offer Details', 'Detalle de Ofertas Individuales')}")
                     col_rt_b1, col_rt_b2 = st.columns(2)
                     mas_to_plot_list = [m for m in filtered_res_ma.index if m != 'ESTABANELL Y PAHISA MERCATOR']
                     df_graph = filtered_rt5.loc[filtered_rt5['MA'].isin(mas_to_plot_list)]
