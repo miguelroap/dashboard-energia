@@ -75,7 +75,7 @@ is_hourly = (modo_app == modo_opciones[1])
 @st.cache_data
 def load_daily_data():
     if not os.path.exists('allh_diario_2025.parquet'):
-        st.error(t("Daily file 'allh_diario_2025.parquet' not found.", "Archivo diario no encontrado en GitHub."))
+        st.error(t("Daily file 'allh_diario_2025.parquet' not found.", "Archivo diario 'allh_diario_2025.parquet' no encontrado en GitHub."))
         return pd.DataFrame()
     df = pd.read_parquet('allh_diario_2025.parquet')
     for col in ['UP', 'MA', 'Tech']:
@@ -86,7 +86,7 @@ def load_daily_data():
 def load_hourly_data(mes):
     f1, f2 = f'allh_{mes}_part1.parquet', f'allh_{mes}_part2.parquet'
     if not (os.path.exists(f1) and os.path.exists(f2)):
-        st.error(f"{t('Missing parts for month', 'Faltan archivos para el mes')} {mes}")
+        st.error(f"{t('Missing parts for month', 'Faltan archivos (part1 y part2) para el mes')} {mes}")
         return pd.DataFrame()
     df = pd.concat([pd.read_parquet(f1), pd.read_parquet(f2)], ignore_index=True)
     for col in ['UP', 'MA', 'Tech']:
@@ -128,7 +128,7 @@ df_power = load_power_data()
 if allh_full.empty:
     st.stop()
 
-# Blindaje de columnas numéricas
+# Blindaje de columnas
 allh_full['Day'] = pd.to_datetime(allh_full['Day'])
 cols_to_ensure = ['Profit_rt', 'Profit_tr_s', 'Profit_tr', 'Profit_t', 'Profit_rr', 'Profit_b', 'Profit_se', 'Profit_i',
                   'Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr', 'Energy_i', 'Profit_p48', 'Energy_p48', 'PBF', 'Energy_RT1', 'Rev_tr']
@@ -149,29 +149,31 @@ allh = allh_full.loc[(allh_full['Day'].dt.date >= start_date) & (allh_full['Day'
 gc.collect()
 
 # ==============================================================================
-# MENÚ DE NAVEGACIÓN DINÁMICO
+# MENÚ DE NAVEGACIÓN DINÁMICO Y A PRUEBA DE FALLOS
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
 
-menu_options = [
-    t("📈 Main Overview", "📈 Resumen Principal"), 
-    t("⚡ MRA Analysis", "⚡ Análisis MRA"), 
-    t("📊 Gnera Analysis", "📊 Análisis Gnera"),
-    t("💶 Verbund Profit", "💶 Beneficio Verbund"),
-    t("📈 Revenue Evolution", "📈 Evolución Ingresos")
-]
-# En modo horario, añadimos el detalle RT5
+# Definimos los nombres de forma estática para que nunca fallen los condicionales
+name_main = t("📈 Main Overview", "📈 Resumen Principal")
+name_mra = t("⚡ MRA Analysis", "⚡ Análisis MRA")
+name_rt5 = t("📋 RT5 Detail", "📋 Detalle RT5")
+name_gnera = t("📊 Gnera Analysis", "📊 Análisis Gnera")
+name_verbund = t("💶 Verbund Profit", "💶 Beneficio Verbund")
+name_evo = t("📈 Revenue Evolution", "📈 Evolución Ingresos")
+
+menu_options = [name_main, name_mra, name_gnera, name_verbund, name_evo]
+
+# En modo horario, añadimos el detalle RT5 en la tercera posición
 if is_hourly:
-    rt5_name = t("📋 RT5 Detail", "📋 Detalle RT5")
-    menu_options.insert(2, rt5_name)
+    menu_options.insert(2, name_rt5)
 
 seleccion_menu = st.sidebar.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
 # SECCIÓN 1: RESUMEN PRINCIPAL (Funciona en ambos)
 # ==============================================================================
-if seleccion_menu == menu_options[0]:
+if seleccion_menu == name_main:
     st.markdown(f'<div class="section-title">{t("Ancillary Services Revenue Dispersion by Technology", "Dispersión de ingresos en Servicios de ajuste por Tecnología")}</div>', unsafe_allow_html=True)
     
     col_f1, col_f2 = st.columns(2)
@@ -225,9 +227,9 @@ if seleccion_menu == menu_options[0]:
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 2: ANÁLISIS MRA (Adapatado a Diario/Horario)
+# SECCIÓN 2: ANÁLISIS MRA
 # ==============================================================================
-elif seleccion_menu == menu_options[1]:
+elif seleccion_menu == name_mra:
     st.markdown(f'<div class="section-title">{t("MRA Analysis - Technology - Installation", "Análisis MRA - Tecnología - Instalación")}</div>', unsafe_allow_html=True)
     
     f_ma, f_tech, f_up = st.columns(3)
@@ -249,7 +251,6 @@ elif seleccion_menu == menu_options[1]:
     if up_df.empty:
         st.warning(t("No data available.", "No hay datos disponibles para la combinación seleccionada."))
     else:
-        # Si es modo diario, NO agrupamos por hour porque no existe
         cols_to_groupby = ['Tech','MA','Day','hour'] if is_hourly else ['Tech','MA','Day']
         cols_sum = ['PBF','Energy_p48','Energy_RT1','Profit_rt', 'Profit_t', 'Profit_rr', 'Profit_se', 'Profit_b','Profit_tr','Profit_i','Energy_rt', 'Energy_t', 'Energy_rr', 'Energy_se', 'Energy_tr','Profit_p48','Rev_tr']
         
@@ -315,7 +316,7 @@ elif seleccion_menu == menu_options[1]:
 # ==============================================================================
 # SECCIÓN 3: DETALLE RT5 (SOLO EN MODO HORARIO)
 # ==============================================================================
-elif is_hourly and seleccion_menu == rt5_name:
+elif is_hourly and seleccion_menu == name_rt5:
     st.markdown(f'<div class="section-title">{t("RT5 Detail: Prices & Offers", "Detalle RT5: Precios y Ofertas")}</div>', unsafe_allow_html=True)
     try:
         filtered_rt5 = allh.loc[(allh['Tech'].isin(['Solar PV', 'Wind'])) & (allh['Profit_tr_s'] != 0)].copy()
@@ -365,7 +366,7 @@ elif is_hourly and seleccion_menu == rt5_name:
 # ==============================================================================
 # SECCIÓN 4: ANÁLISIS GNERA
 # ==============================================================================
-elif seleccion_menu == menu_options[3 if not is_hourly else 4]: # Ajuste de indice si RT5 está oculto
+elif seleccion_menu == name_gnera:
     st.markdown(f'<div class="section-title">{t("Gnera Analysis", "Análisis Gnera")}</div>', unsafe_allow_html=True)
     try:
         POTENCIA_INSTALADA = {'EOTMR': 87.6, 'LECDE': 9.6, 'PEVER': 182.3, 'PEVER2': 29.8}
@@ -447,7 +448,7 @@ elif seleccion_menu == menu_options[3 if not is_hourly else 4]: # Ajuste de indi
 # ==============================================================================
 # SECCIÓN 5: BENEFICIO VERBUND
 # ==============================================================================
-elif seleccion_menu == menu_options[4 if not is_hourly else 5]:
+elif seleccion_menu == name_verbund:
     st.markdown(f'<div class="section-title">{t("Verbund Profit (€)", "Beneficio Verbund Servicios de Ajuste (€)")}</div>', unsafe_allow_html=True)
     try:
         INPUT_DATA = {
@@ -479,7 +480,7 @@ elif seleccion_menu == menu_options[4 if not is_hourly else 5]:
 # ==============================================================================
 # SECCIÓN 6: EVOLUCIÓN INGRESOS
 # ==============================================================================
-elif seleccion_menu == menu_options[5 if not is_hourly else 6]:
+elif seleccion_menu == name_evo:
     st.markdown(f'<div class="section-title">{t("Revenue Evolution by Market Agent and Technology", "Evolución Ingresos por Representante y Tecnología")}</div>', unsafe_allow_html=True)
     try:
         col_e1, col_e2 = st.columns(2)
