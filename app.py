@@ -83,10 +83,21 @@ is_hourly = (modo_app == modo_opciones[1])
 # --- FUNCIONES DE CARGA ---
 @st.cache_data
 def load_daily_data():
-    if not os.path.exists('allh_diario_2025.parquet'):
-        st.error(t("Daily file 'allh_diario_2025.parquet' not found.", "Archivo diario 'allh_diario_2025.parquet' no encontrado en GitHub."))
+    # LISTA DE ARCHIVOS DIARIOS A CARGAR
+    archivos_diarios = ['allh_diario_2023.parquet', 'allh_diario_2024.parquet', 'allh_diario_2025.parquet']
+    dfs = []
+    
+    for archivo in archivos_diarios:
+        if os.path.exists(archivo):
+            dfs.append(pd.read_parquet(archivo))
+            
+    if not dfs:
+        st.error(t("Daily files not found.", "Archivos diarios no encontrados en GitHub."))
         return pd.DataFrame()
-    df = pd.read_parquet('allh_diario_2025.parquet')
+        
+    # Unimos todos los años en un solo DataFrame
+    df = pd.concat(dfs, ignore_index=True)
+    
     for col in ['UP', 'MA', 'Tech']:
         if col in df.columns: df[col] = df[col].astype('category')
     return df
