@@ -958,7 +958,7 @@ elif seleccion_menu == name_evo:
             ma_input = st.selectbox(
                 t("Market Agent (MA):","Representante (MA):"),
                 sorted(allh['MA'].unique()),
-                index=list(sorted(allh['MA'].unique())).index('GALP') if 'GALP' in allh['MA'].unique() else 0
+                index=list(sorted(allh['MA'].unique())).index('GNERA') if 'GNERA' in allh['MA'].unique() else 0
             )
         with col_e2:
             tech_input = st.selectbox(
