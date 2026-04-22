@@ -120,29 +120,29 @@ PLOTLY_THEME = dict(
     paper_bgcolor="#161b27",
     plot_bgcolor="#1a2035",
     font=dict(family="Inter, sans-serif", color="#94a3b8", size=12),
-    title_font=dict(family="Inter, sans-serif", color="#e2e8f0", size=14),
     legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2e3a52", borderwidth=1, font=dict(size=11)),
     margin=dict(l=10, r=10, t=40, b=10),
     colorway=["#00d4ff", "#7c3aed", "#f59e0b", "#34d399", "#f87171", "#a78bfa", "#fb923c", "#38bdf8"],
-    xaxis=dict(gridcolor="#1e2433", gridwidth=1, zerolinecolor="#2e3a52", tickfont=dict(size=11)),
-    yaxis=dict(gridcolor="#1e2433", gridwidth=1, zerolinecolor="#2e3a52", tickfont=dict(size=11)),
 )
+
+def base_layout(**extra):
+    """Devuelve un dict de layout limpio para update_layout, sin duplicados."""
+    layout = dict(
+        template="plotly_dark",
+        paper_bgcolor="#161b27",
+        plot_bgcolor="#1a2035",
+        font=dict(family="Inter, sans-serif", color="#94a3b8", size=12),
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2e3a52", borderwidth=1, font=dict(size=11)),
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+    layout.update(extra)
+    return layout
 
 C_POS = "#34d399"
 C_NEG = "#f87171"
 C_BASE = "#00d4ff"
 C_ACCENT = "#7c3aed"
 C_WARN = "#f59e0b"
-
-def apply_theme(fig, height=420):
-    """Aplica el tema oscuro estándar a una figura Plotly."""
-    fig.update_layout(
-        height=height,
-        **PLOTLY_THEME,
-    )
-    fig.update_xaxes(gridcolor="#1e2433", zerolinecolor="#2e3a52")
-    fig.update_yaxes(gridcolor="#1e2433", zerolinecolor="#2e3a52")
-    return fig
 
 def section_header(icon, title):
     st.markdown(f'<div class="section-header"><h3>{icon} {title}</h3></div>', unsafe_allow_html=True)
@@ -374,6 +374,9 @@ if seleccion_menu == name_main:
         highlighted = data[data['is_Highlighted']]
 
         fig = go.Figure()
+        # Construir fillcolor seguro desde hex
+        r, g, b = px.colors.hex_to_rgb(color_main)
+        fill_rgba = f"rgba({r},{g},{b},0.15)"
         for ma in order:
             ma_data = normal[normal['MA'] == ma]['Profit_per_MW']
             if ma_data.empty: continue
@@ -381,7 +384,7 @@ if seleccion_menu == name_main:
                 y=ma_data, name=str(ma), boxpoints=False,
                 marker_color=color_main,
                 line_color=color_main,
-                fillcolor=f"rgba{tuple(list(px.colors.hex_to_rgb(color_main)) + [0.15])}",
+                fillcolor=fill_rgba,
                 showlegend=False,
                 hovertemplate=f"<b>{ma}</b><br>Mediana: %{{median:.1f}} €/MW<br>IQR: %{{q1:.1f}} – %{{q3:.1f}}<extra></extra>"
             ))
@@ -396,17 +399,14 @@ if seleccion_menu == name_main:
             ))
 
         fig.add_hline(y=0, line_dash="dot", line_color="#4b5563", line_width=1)
-        fig.update_layout(
-            title=dict(text=f"<b>{tech}</b> · {t('Profit/MW by Market Agent','Profit/MW por Representante')}", font=dict(size=13)),
-            xaxis_title="", yaxis_title=t("Avg Monthly Profit / MW (€)","Profit Mensual Medio / MW (€)"),
-            xaxis=dict(tickangle=-35),
-            **{k: v for k, v in PLOTLY_THEME.items() if k not in ['xaxis','yaxis']},
-            paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-            font=dict(family="Inter", color="#94a3b8"),
-            height=430
-        )
-        fig.update_xaxes(gridcolor="#1e2433")
-        fig.update_yaxes(gridcolor="#1e2433")
+        fig.update_layout(**base_layout(
+            title=dict(text=f"<b>{tech}</b> · {t('Profit/MW by Market Agent','Profit/MW por Representante')}", font=dict(size=13, color="#e2e8f0")),
+            xaxis_title="",
+            yaxis_title=t("Avg Monthly Profit / MW (€)", "Profit Mensual Medio / MW (€)"),
+            height=430,
+        ))
+        fig.update_xaxes(gridcolor="#1e2433", tickangle=-35)
+        fig.update_yaxes(gridcolor="#1e2433", zerolinecolor="#4b5563")
         return fig
 
     c1, c2 = st.columns(2)
@@ -745,13 +745,15 @@ elif seleccion_menu == name_rt5:
                 df_t = df[df['Tech'] == tech]
                 if df_t.empty: return None
                 evo = df_t.groupby('time_x', observed=True)['Profit_tr_s'].sum().reset_index().sort_values('time_x')
+                _r, _g, _b = px.colors.hex_to_rgb(color)
+                _fill = f"rgba({_r},{_g},{_b},0.08)"
                 fig = go.Figure(go.Scatter(
                     x=evo['time_x'], y=evo['Profit_tr_s'],
                     mode='lines+markers',
                     line=dict(color=color, width=2.5),
                     marker=dict(color=color, size=6, line=dict(color='white', width=1)),
                     fill='tozeroy',
-                    fillcolor=f"rgba{tuple(list(px.colors.hex_to_rgb(color)) + [0.08])}",
+                    fillcolor=_fill,
                     hovertemplate="<b>%{x}</b><br>Profit RT5: %{y:,.0f} €<extra></extra>"
                 ))
                 fig.update_layout(
