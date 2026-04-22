@@ -280,8 +280,9 @@ name_rt5     = t("📋 RT5 Detail", "📋 Detalle RT5")
 name_gnera   = t("📊 Gnera Analysis", "📊 Análisis Gnera")
 name_verbund = t("💶 Verbund Profit", "💶 Beneficio Verbund")
 name_evo     = t("📈 Revenue Evolution", "📈 Evolución Ingresos")
+name_supply  = t("🏪 Retailers (Supply)", "🏪 Comercializadoras (Supply)")
 
-menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo]
+menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply]
 seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
@@ -1021,4 +1022,512 @@ elif seleccion_menu == name_evo:
 
     except Exception as e:
         st.warning(f"{t('Error:','Error:')} {e}")
+    gc.collect()
+
+# ==============================================================================
+# SECCIÓN 7: COMERCIALIZADORAS (SUPPLY) — ANÁLISIS INTRADIARIO
+# ==============================================================================
+elif seleccion_menu == name_supply:
+    section_header("🏪", t("Retailers – Intraday Market Performance (Supply)",
+                            "Comercializadoras – Desempeño en Mercado Intradiario (Supply)"))
+    try:
+        # ── Filtro Tech == Supply ──────────────────────────────────────────────
+        sp = allh[allh['Tech'] == 'Supply'].copy()
+
+        if sp.empty:
+            st.info(t("No Supply data found in the selected period.",
+                      "No hay datos de tipo 'Supply' en el periodo seleccionado."))
+            st.stop()
+
+        # ── Conversión de columnas numéricas ──────────────────────────────────
+        for col in ['PBF','Energy_p48','Energy_i','Rev_spot','Rev_i','Profit_i','Profit_p48']:
+            if col in sp.columns:
+                sp[col] = pd.to_numeric(sp[col], errors='coerce').fillna(0)
+            else:
+                sp[col] = 0.0
+
+        sp['Abs_Energy_i']  = sp['Energy_i'].abs()
+        sp['Abs_PBF']       = sp['PBF'].abs()
+
+        # ── KPIs por MA ───────────────────────────────────────────────────────
+        ma_kpis = sp.groupby('MA', observed=True).agg(
+            Total_Energy_i   =('Energy_i',   'sum'),
+            Vol_Abs_i        =('Abs_Energy_i','sum'),
+            Vol_Abs_PBF      =('Abs_PBF',    'sum'),
+            Total_Rev_i      =('Rev_i',      'sum'),
+            Total_Profit_i   =('Profit_i',   'sum'),
+            Total_Profit_p48 =('Profit_p48', 'sum'),
+            Total_Energy_p48 =('Energy_p48', 'sum'),
+        ).reset_index()
+        ma_kpis['MA'] = ma_kpis['MA'].astype(str)
+
+        # €/MWh intradiario sobre volumen negociado
+        ma_kpis['Profit_per_MWh_i'] = np.where(
+            ma_kpis['Vol_Abs_i'] > 0,
+            ma_kpis['Total_Profit_i'] / ma_kpis['Vol_Abs_i'], 0)
+
+        # Sobre-ingreso vs spot (%)
+        ma_kpis['Inc_vs_Spot_pct'] = np.where(
+            ma_kpis['Total_Profit_p48'].abs() > 0,
+            (ma_kpis['Total_Profit_i'] / ma_kpis['Total_Profit_p48'].abs()) * 100, 0)
+
+        # €/MWh sobre programa final P48
+        ma_kpis['Profit_i_per_p48'] = np.where(
+            ma_kpis['Total_Energy_p48'].abs() > 0,
+            ma_kpis['Total_Profit_i'] / ma_kpis['Total_Energy_p48'].abs(), 0)
+
+        # Cuota de mercado intradiario y diario
+        vol_tot_i   = ma_kpis['Vol_Abs_i'].sum()
+        vol_tot_pbf = ma_kpis['Vol_Abs_PBF'].sum()
+        ma_kpis['Share_i_pct']   = ma_kpis['Vol_Abs_i']   / vol_tot_i   * 100 if vol_tot_i   > 0 else 0
+        ma_kpis['Share_pbf_pct'] = ma_kpis['Vol_Abs_PBF'] / vol_tot_pbf * 100 if vol_tot_pbf > 0 else 0
+
+        best = ma_kpis.sort_values('Total_Profit_i', ascending=False)
+        worst = ma_kpis.sort_values('Total_Profit_i', ascending=True)
+
+        # ── KPI CARDS ─────────────────────────────────────────────────────────
+        total_profit_supply = ma_kpis['Total_Profit_i'].sum()
+        n_ma_supply         = len(ma_kpis)
+        best_ma             = best.iloc[0]['MA'] if not best.empty else '—'
+        best_profit         = best.iloc[0]['Total_Profit_i'] if not best.empty else 0
+
+        kc1, kc2, kc3, kc4 = st.columns(4)
+        with kc1: st.markdown(metric_card(
+            t("Total Intraday Profit","Profit Intradiario Total"),
+            f"{total_profit_supply:,.0f}", unit=" €",
+            positive=total_profit_supply >= 0), unsafe_allow_html=True)
+        with kc2: st.markdown(metric_card(
+            t("Retailers Analyzed","Comercializadoras Analizadas"),
+            str(n_ma_supply)), unsafe_allow_html=True)
+        with kc3: st.markdown(metric_card(
+            t("Best Retailer","Mejor Comercializadora"),
+            best_ma,
+            delta=f"{best_profit:,.0f} €",
+            positive=True), unsafe_allow_html=True)
+        with kc4:
+            avg_eur_mwh = (ma_kpis['Total_Profit_i'].sum() / ma_kpis['Vol_Abs_i'].sum()
+                           if ma_kpis['Vol_Abs_i'].sum() > 0 else 0)
+            st.markdown(metric_card(
+                t("Market Avg €/MWh","Media mercado €/MWh"),
+                f"{avg_eur_mwh:.3f}", unit=" €/MWh",
+                positive=avg_eur_mwh >= 0), unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── TABS internos ─────────────────────────────────────────────────────
+        tab_ranking, tab_scatter, tab_evol, tab_detail = st.tabs([
+            t("📊 Ranking","📊 Ranking"),
+            t("🎯 Efficiency vs Volume","🎯 Eficiencia vs Volumen"),
+            t("📈 Cumulative Evolution","📈 Evolución Acumulada"),
+            t("🔍 Individual Analysis","🔍 Análisis Individual"),
+        ])
+
+        # ────────────────────────────────────────────────────────
+        # TAB 1 — RANKING: Top mejores / peores + cuotas de mercado
+        # ────────────────────────────────────────────────────────
+        with tab_ranking:
+            col_rk1, col_rk2 = st.columns(2)
+
+            # Top 15 mejores — barras horizontales
+            with col_rk1:
+                section_header("🏆", t("Top 15 – Best Intraday Profit","Top 15 – Mayor Beneficio Intradiario"))
+                top15 = best.head(15).copy().sort_values('Total_Profit_i')
+                fig_best = go.Figure(go.Bar(
+                    x=top15['Total_Profit_i'], y=top15['MA'],
+                    orientation='h',
+                    marker=dict(
+                        color=top15['Total_Profit_i'],
+                        colorscale=[[0,"#86efac"],[1,"#15803d"]],
+                        showscale=False),
+                    text=[f"{v:,.0f} €" for v in top15['Total_Profit_i']],
+                    textposition='outside',
+                    customdata=np.stack([top15['Profit_per_MWh_i'], top15['Share_i_pct']], axis=-1),
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Profit: %{x:,.0f} €<br>"
+                        "€/MWh: %{customdata[0]:.3f}<br>"
+                        "Cuota intra: %{customdata[1]:.1f}%<extra></extra>")
+                ))
+                fig_best.update_layout(**base_layout(
+                    xaxis_title="€", height=420,
+                    margin=dict(l=10,r=100,t=20,b=10)))
+                fig_best.update_xaxes(gridcolor="#e2e8f0")
+                fig_best.update_yaxes(gridcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_best, use_container_width=True)
+
+            # Top 15 peores
+            with col_rk2:
+                section_header("⚠️", t("Top 15 – Worst Intraday Profit","Top 15 – Peor Beneficio Intradiario"))
+                bot15 = worst.head(15).copy().sort_values('Total_Profit_i', ascending=False)
+                fig_worst = go.Figure(go.Bar(
+                    x=bot15['Total_Profit_i'], y=bot15['MA'],
+                    orientation='h',
+                    marker=dict(
+                        color=bot15['Total_Profit_i'],
+                        colorscale=[[0,"#b91c1c"],[1,"#fca5a5"]],
+                        showscale=False),
+                    text=[f"{v:,.0f} €" for v in bot15['Total_Profit_i']],
+                    textposition='outside',
+                    customdata=np.stack([bot15['Profit_per_MWh_i'], bot15['Share_i_pct']], axis=-1),
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Profit: %{x:,.0f} €<br>"
+                        "€/MWh: %{customdata[0]:.3f}<br>"
+                        "Cuota intra: %{customdata[1]:.1f}%<extra></extra>")
+                ))
+                fig_worst.update_layout(**base_layout(
+                    xaxis_title="€", height=420,
+                    margin=dict(l=10,r=100,t=20,b=10)))
+                fig_worst.update_xaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+                fig_worst.update_yaxes(gridcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_worst, use_container_width=True)
+
+            st.markdown("---")
+
+            # Cuotas de mercado — pie charts
+            section_header("🥧", t("Market Share","Cuotas de Mercado"))
+            col_p1, col_p2 = st.columns(2)
+
+            def make_pie(df_sorted, value_col, label, n_top=7):
+                top_n = df_sorted.head(n_top)
+                otros_val = df_sorted.iloc[n_top:][value_col].sum()
+                labels_ = top_n['MA'].tolist() + ([t('Others','Otros')] if otros_val > 0 else [])
+                values_ = top_n[value_col].tolist() + ([otros_val] if otros_val > 0 else [])
+                fig = go.Figure(go.Pie(
+                    labels=labels_, values=values_,
+                    hole=0.38,
+                    textinfo='label+percent',
+                    textfont=dict(size=11),
+                    marker=dict(colors=px.colors.qualitative.Set2,
+                                line=dict(color='white', width=2)),
+                    hovertemplate="<b>%{label}</b><br>%{value:.1f}%<extra></extra>",
+                ))
+                fig.update_layout(**base_layout(
+                    title=dict(text=label, font=dict(size=13, color="#1e293b")),
+                    height=360, margin=dict(l=10,r=10,t=50,b=10),
+                    showlegend=False))
+                return fig
+
+            share_sorted_pbf = ma_kpis.sort_values('Share_pbf_pct', ascending=False)
+            share_sorted_i   = ma_kpis.sort_values('Share_i_pct',   ascending=False)
+
+            with col_p1:
+                st.plotly_chart(make_pie(share_sorted_pbf, 'Share_pbf_pct',
+                    t("Day-Ahead Market Share (PBF Volume)","Cuota Mercado Diario (Volumen PBF)")),
+                    use_container_width=True)
+            with col_p2:
+                st.plotly_chart(make_pie(share_sorted_i, 'Share_i_pct',
+                    t("Intraday Market Share (Traded Volume)","Cuota Mercado Intradiario (Volumen Negociado)")),
+                    use_container_width=True)
+
+            # Tabla resumen completa
+            st.markdown("---")
+            section_header("📋", t("Full KPI Table","Tabla Completa de KPIs"))
+            df_display = ma_kpis[[
+                'MA','Total_Profit_i','Profit_per_MWh_i',
+                'Inc_vs_Spot_pct','Profit_i_per_p48',
+                'Share_i_pct','Share_pbf_pct','Vol_Abs_i','Total_Energy_p48'
+            ]].copy().sort_values('Total_Profit_i', ascending=False)
+            df_display.columns = [
+                t('Retailer','Comercializadora'),
+                t('Intraday Profit (€)','Beneficio Intradiario (€)'),
+                t('€/MWh (intra vol)','€/MWh (vol intra)'),
+                t('Over-spot Revenue (%)','Sobre-ingreso vs Spot (%)'),
+                t('€/MWh (vs P48)','€/MWh (vs P48)'),
+                t('Intraday Share (%)','Cuota Intradiario (%)'),
+                t('Day-Ahead Share (%)','Cuota Diario (%)'),
+                t('Intraday Volume (MWh)','Volumen Intradiario (MWh)'),
+                t('P48 Volume (MWh)','Volumen P48 (MWh)'),
+            ]
+            profit_col  = t('Intraday Profit (€)','Beneficio Intradiario (€)')
+            vol_col     = t('Intraday Volume (MWh)','Volumen Intradiario (MWh)')
+            eur_mwh_col = t('€/MWh (intra vol)','€/MWh (vol intra)')
+            st.dataframe(
+                df_display.set_index(t('Retailer','Comercializadora')).style
+                .format({
+                    t('Intraday Profit (€)','Beneficio Intradiario (€)'): '{:,.0f} €',
+                    t('€/MWh (intra vol)','€/MWh (vol intra)'): '{:.3f}',
+                    t('Over-spot Revenue (%)','Sobre-ingreso vs Spot (%)'): '{:.2f}%',
+                    t('€/MWh (vs P48)','€/MWh (vs P48)'): '{:.4f}',
+                    t('Intraday Share (%)','Cuota Intradiario (%)'): '{:.2f}%',
+                    t('Day-Ahead Share (%)','Cuota Diario (%)'): '{:.2f}%',
+                    t('Intraday Volume (MWh)','Volumen Intradiario (MWh)'): '{:,.0f}',
+                    t('P48 Volume (MWh)','Volumen P48 (MWh)'): '{:,.0f}',
+                })
+                .background_gradient(subset=[profit_col], cmap='RdYlGn')
+                .background_gradient(subset=[eur_mwh_col], cmap='RdYlGn'),
+                use_container_width=True
+            )
+
+        # ────────────────────────────────────────────────────────
+        # TAB 2 — SCATTER: Eficiencia (€/MWh) vs Cuota de mercado
+        # ────────────────────────────────────────────────────────
+        with tab_scatter:
+            section_header("🎯", t(
+                "Efficiency vs Market Share – where each retailer stands",
+                "Eficiencia vs Cuota de Mercado – dónde se posiciona cada comercializadora"))
+            st.caption(t(
+                "Bubble size = absolute intraday profit. X axis = intraday market share. Y axis = €/MWh efficiency. "
+                "Top-right quadrant: high share + high efficiency (best). "
+                "Bottom-right: high share but low efficiency (large but inefficient).",
+                "Tamaño burbuja = profit intradiario absoluto. Eje X = cuota de mercado intradiario. "
+                "Eje Y = eficiencia €/MWh. Cuadrante superior-derecho: alta cuota + alta eficiencia (mejores). "
+                "Inferior-derecho: alta cuota pero baja eficiencia (grandes pero poco eficientes)."))
+
+            sc_data = ma_kpis.copy()
+            sc_data['abs_profit'] = sc_data['Total_Profit_i'].abs().clip(lower=1)
+            sc_data['profit_positive'] = sc_data['Total_Profit_i'] >= 0
+
+            fig_sc = go.Figure()
+            for positive, color, name_ in [
+                (True,  C_POS, t("Profit > 0","Beneficio > 0")),
+                (False, C_NEG, t("Profit < 0","Pérdida")),
+            ]:
+                sub = sc_data[sc_data['profit_positive'] == positive]
+                if sub.empty: continue
+                fig_sc.add_trace(go.Scatter(
+                    x=sub['Share_i_pct'],
+                    y=sub['Profit_per_MWh_i'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=np.sqrt(sub['abs_profit']) / np.sqrt(sub['abs_profit'].max()) * 45 + 8,
+                        color=color, opacity=0.75,
+                        line=dict(color='white', width=1)),
+                    text=sub['MA'],
+                    textposition='top center',
+                    textfont=dict(size=9, color="#475569"),
+                    name=name_,
+                    customdata=np.stack([
+                        sub['Total_Profit_i'],
+                        sub['Inc_vs_Spot_pct'],
+                        sub['Vol_Abs_i']
+                    ], axis=-1),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        "Cuota intra: %{x:.1f}%<br>"
+                        "€/MWh: %{y:.3f}<br>"
+                        "Profit: %{customdata[0]:,.0f} €<br>"
+                        "Sobre-ingreso vs spot: %{customdata[1]:.2f}%<br>"
+                        "Volumen: %{customdata[2]:,.0f} MWh<extra></extra>")
+                ))
+
+            # Líneas de referencia en (0,0) del eje Y y media de cuota
+            fig_sc.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1.5)
+            avg_share = sc_data['Share_i_pct'].mean()
+            fig_sc.add_vline(x=avg_share, line_dash="dot", line_color="#94a3b8", line_width=1.5,
+                             annotation_text=t("Avg share","Cuota media"),
+                             annotation_position="top right",
+                             annotation_font=dict(size=10, color="#94a3b8"))
+
+            fig_sc.update_layout(**base_layout(
+                xaxis_title=t("Intraday Market Share (%)","Cuota de Mercado Intradiario (%)"),
+                yaxis_title=t("Intraday Profit per MWh (€/MWh)","Beneficio Intradiario por MWh (€/MWh)"),
+                height=520,
+                showlegend=True,
+                margin=dict(l=10,r=10,t=20,b=10),
+            ))
+            fig_sc.update_xaxes(gridcolor="#e2e8f0")
+            fig_sc.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+        # ────────────────────────────────────────────────────────
+        # TAB 3 — EVOLUCIÓN ACUMULADA Top 5 mejores y peores
+        # ────────────────────────────────────────────────────────
+        with tab_evol:
+            section_header("📈", t("Cumulative Intraday Profit Evolution","Evolución del Beneficio Intradiario Acumulado"))
+
+            top5_mas   = best.head(5)['MA'].astype(str).tolist()
+            bot5_mas   = worst.head(5)['MA'].astype(str).tolist()
+
+            sp['MA_str'] = sp['MA'].astype(str)
+
+            def build_cum(df_, ma_list):
+                df_f = df_[df_['MA_str'].isin(ma_list)].copy()
+                evo = df_f.groupby(['Day','MA_str'], observed=True)['Profit_i'].sum().reset_index()
+                evo = evo.sort_values('Day')
+                evo['Cum_Profit'] = evo.groupby('MA_str')['Profit_i'].cumsum()
+                evo['Cum_Profit_k'] = evo['Cum_Profit'] / 1000
+                return evo
+
+            evo_best = build_cum(sp, top5_mas)
+            evo_worst = build_cum(sp, bot5_mas)
+
+            col_ev1, col_ev2 = st.columns(2)
+
+            def make_cum_line(evo_df, title, color_seq):
+                fig = px.line(
+                    evo_df, x='Day', y='Cum_Profit_k', color='MA_str',
+                    markers=False,
+                    color_discrete_sequence=color_seq,
+                    labels={'Cum_Profit_k': 'k€', 'Day': '', 'MA_str': 'MA'},
+                )
+                fig.update_traces(line=dict(width=2.5))
+                for trace in fig.data:
+                    ma_name = trace.name
+                    last = evo_df[evo_df['MA_str'] == ma_name].iloc[-1]
+                    fig.add_annotation(
+                        x=last['Day'], y=last['Cum_Profit_k'],
+                        text=f"  {ma_name}",
+                        showarrow=False, xanchor='left',
+                        font=dict(size=10, color=trace.line.color))
+                fig.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1)
+                fig.update_layout(**base_layout(
+                    title=dict(text=title, font=dict(size=13, color="#1e293b")),
+                    yaxis_title=t("Accumulated Profit (k€)","Beneficio Acumulado (k€)"),
+                    height=400, showlegend=False,
+                    margin=dict(l=10,r=120,t=45,b=10),
+                    hovermode='x unified',
+                ))
+                fig.update_xaxes(gridcolor="#e2e8f0")
+                fig.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+                return fig
+
+            with col_ev1:
+                st.plotly_chart(make_cum_line(
+                    evo_best,
+                    t("Top 5 Best – Accumulated Profit","Top 5 Mejores – Profit Acumulado"),
+                    px.colors.qualitative.Set2), use_container_width=True)
+            with col_ev2:
+                st.plotly_chart(make_cum_line(
+                    evo_worst,
+                    t("Top 5 Worst – Accumulated Loss","Top 5 Peores – Pérdida Acumulada"),
+                    px.colors.qualitative.Set1), use_container_width=True)
+
+            # Evolución del beneficio DIARIO (no acumulado) del mejor MA
+            st.markdown("---")
+            section_header("📅", t("Daily Profit – Best Retailer","Beneficio Diario – Mejor Comercializadora"))
+            if top5_mas:
+                best_ma_str = top5_mas[0]
+                evo_daily_best = sp[sp['MA_str'] == best_ma_str].groupby('Day', observed=True).agg(
+                    Daily_Profit=('Profit_i','sum'),
+                    Daily_Energy=('Energy_p48','sum')
+                ).reset_index()
+                evo_daily_best['EurMWh'] = np.where(
+                    evo_daily_best['Daily_Energy'].abs() > 0,
+                    evo_daily_best['Daily_Profit'] / evo_daily_best['Daily_Energy'].abs(), 0)
+
+                fig_daily = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_daily.add_trace(go.Bar(
+                    x=evo_daily_best['Day'], y=evo_daily_best['Daily_Profit'],
+                    name=t("Daily Profit (€)","Beneficio Diario (€)"),
+                    marker_color=[C_POS if v >= 0 else C_NEG for v in evo_daily_best['Daily_Profit']],
+                    hovertemplate="%{x|%d/%m/%Y}<br>%{y:,.0f} €<extra></extra>"
+                ), secondary_y=False)
+                fig_daily.add_trace(go.Scatter(
+                    x=evo_daily_best['Day'], y=evo_daily_best['EurMWh'],
+                    name="€/MWh",
+                    mode='lines', line=dict(color=C_ACCENT, width=2),
+                    hovertemplate="%{x|%d/%m/%Y}<br>%{y:.4f} €/MWh<extra></extra>"
+                ), secondary_y=True)
+                fig_daily.update_layout(**base_layout(
+                    title=dict(text=f"<b>{best_ma_str}</b> · {t('Daily Intraday Performance','Desempeño Intradiario Diario')}",
+                               font=dict(size=13, color="#1e293b")),
+                    height=380, hovermode='x unified',
+                    margin=dict(l=10,r=10,t=45,b=10),
+                    legend=dict(orientation='h', yanchor='bottom', y=1.01, xanchor='right', x=1)
+                ))
+                fig_daily.update_yaxes(title_text=t("Daily Profit (€)","Beneficio Diario (€)"),
+                                       gridcolor="#e2e8f0", secondary_y=False)
+                fig_daily.update_yaxes(title_text="€/MWh", secondary_y=True,
+                                       gridcolor="rgba(0,0,0,0)")
+                fig_daily.update_xaxes(gridcolor="#e2e8f0")
+                st.plotly_chart(fig_daily, use_container_width=True)
+
+        # ────────────────────────────────────────────────────────
+        # TAB 4 — ANÁLISIS INDIVIDUAL por MA
+        # ────────────────────────────────────────────────────────
+        with tab_detail:
+            section_header("🔍", t("Individual Retailer Analysis","Análisis Individual por Comercializadora"))
+
+            all_mas_supply = sorted(sp['MA_str'].unique().tolist())
+            default_sel = [m for m in ['IBERDROLA','GESTERNOVA','ENDESA','NATURGY'] if m in all_mas_supply]
+            if not default_sel and all_mas_supply:
+                default_sel = all_mas_supply[:3]
+
+            sel_mas_ind = st.multiselect(
+                t("Select retailers to compare:","Selecciona comercializadoras a comparar:"),
+                options=all_mas_supply,
+                default=default_sel,
+                max_selections=8
+            )
+
+            if not sel_mas_ind:
+                st.info(t("Select at least one retailer.","Selecciona al menos una comercializadora."))
+            else:
+                df_ind = sp[sp['MA_str'].isin(sel_mas_ind)].copy()
+
+                # Evolución diaria en € y €/MWh
+                evo_ind = df_ind.groupby(['Day','MA_str'], observed=True).agg(
+                    Daily_Profit=('Profit_i','sum'),
+                    Daily_Energy=('Energy_p48','sum')
+                ).reset_index()
+                evo_ind['EurMWh_diario'] = np.where(
+                    evo_ind['Daily_Energy'].abs() > 0,
+                    evo_ind['Daily_Profit'] / evo_ind['Daily_Energy'].abs(), 0)
+
+                col_i1, col_i2 = st.columns(2)
+                color_seq_ind = px.colors.qualitative.Set2
+
+                with col_i1:
+                    fig_i1 = px.line(
+                        evo_ind, x='Day', y='Daily_Profit', color='MA_str',
+                        markers=True, color_discrete_sequence=color_seq_ind,
+                        labels={'Daily_Profit': t('Daily Profit (€)','Beneficio Diario (€)'),
+                                'Day':'', 'MA_str':'MA'},
+                        title=t("Daily Intraday Profit (€)","Beneficio Intradiario Diario (€)")
+                    )
+                    fig_i1.add_hline(y=0, line_dash="dot", line_color="#94a3b8")
+                    fig_i1.update_traces(line=dict(width=2), marker=dict(size=4))
+                    fig_i1.update_layout(**base_layout(height=370, hovermode='x unified',
+                        margin=dict(l=10,r=10,t=45,b=10)))
+                    fig_i1.update_xaxes(gridcolor="#e2e8f0")
+                    fig_i1.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8",
+                        title_text=t("Daily Profit (€)","Beneficio Diario (€)"))
+                    st.plotly_chart(fig_i1, use_container_width=True)
+
+                with col_i2:
+                    fig_i2 = px.line(
+                        evo_ind, x='Day', y='EurMWh_diario', color='MA_str',
+                        markers=True, color_discrete_sequence=color_seq_ind,
+                        labels={'EurMWh_diario':'€/MWh', 'Day':'', 'MA_str':'MA'},
+                        title=t("Daily Intraday Efficiency (€/MWh vs P48)","Eficiencia Intradiaria Diaria (€/MWh vs P48)")
+                    )
+                    fig_i2.add_hline(y=0, line_dash="dot", line_color="#94a3b8")
+                    fig_i2.update_traces(line=dict(width=2), marker=dict(size=4))
+                    fig_i2.update_layout(**base_layout(height=370, hovermode='x unified',
+                        margin=dict(l=10,r=10,t=45,b=10)))
+                    fig_i2.update_xaxes(gridcolor="#e2e8f0")
+                    fig_i2.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8",
+                        title_text="€/MWh")
+                    st.plotly_chart(fig_i2, use_container_width=True)
+
+                # Mini-tabla KPI de los seleccionados
+                st.markdown("---")
+                kpi_sel = ma_kpis[ma_kpis['MA'].isin(sel_mas_ind)][[
+                    'MA','Total_Profit_i','Profit_per_MWh_i',
+                    'Inc_vs_Spot_pct','Profit_i_per_p48','Share_i_pct'
+                ]].copy().set_index('MA')
+                kpi_sel.columns = [
+                    t('Intraday Profit (€)','Beneficio Intradiario (€)'),
+                    t('€/MWh (intra)','€/MWh (intra)'),
+                    t('Over-spot (%)','Sobre-ingreso (%)'),
+                    t('€/MWh vs P48','€/MWh vs P48'),
+                    t('Intraday Share (%)','Cuota Intradiario (%)'),
+                ]
+                p_col = t('Intraday Profit (€)','Beneficio Intradiario (€)')
+                st.dataframe(
+                    kpi_sel.style
+                    .format({
+                        t('Intraday Profit (€)','Beneficio Intradiario (€)'): '{:,.0f} €',
+                        t('€/MWh (intra)','€/MWh (intra)'): '{:.4f}',
+                        t('Over-spot (%)','Sobre-ingreso (%)'): '{:.2f}%',
+                        t('€/MWh vs P48','€/MWh vs P48'): '{:.4f}',
+                        t('Intraday Share (%)','Cuota Intradiario (%)'): '{:.2f}%',
+                    })
+                    .background_gradient(subset=[p_col], cmap='RdYlGn'),
+                    use_container_width=True
+                )
+
+    except Exception as e:
+        import traceback
+        st.error(f"Error Supply: {e}\n\n{traceback.format_exc()}")
     gc.collect()
