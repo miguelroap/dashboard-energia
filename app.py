@@ -98,6 +98,7 @@ def base_layout(**extra):
         paper_bgcolor="#ffffff",
         plot_bgcolor="#f8fafc",
         font=dict(family="Inter, sans-serif", color="#475569", size=12),
+        title_font=dict(family="Inter, sans-serif", color="#1e293b", size=13),
         legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#e2e8f0", borderwidth=1, font=dict(size=11)),
         margin=dict(l=10, r=10, t=45, b=10),
     )
@@ -367,7 +368,7 @@ if seleccion_menu == name_main:
 
         fig.add_hline(y=0, line_dash="dot", line_color="#4b5563", line_width=1)
         fig.update_layout(**base_layout(
-            title=dict(text=f"<b>{tech}</b> · {t('Profit/MW by Market Agent','Profit/MW por Representante')}", font=dict(size=13, color="#e2e8f0")),
+            title=dict(text=f"<b>{tech}</b> · {t('Profit/MW by Market Agent','Profit/MW por Representante')}", font=dict(size=13, color="#1e293b")),
             xaxis_title="",
             yaxis_title=t("Avg Monthly Profit / MW (€)", "Profit Mensual Medio / MW (€)"),
             height=430,
@@ -495,7 +496,7 @@ elif seleccion_menu == name_mra:
                 fig_wf.update_layout(
                     title="", yaxis_title="€/MWh",
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
+                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                     margin=dict(l=10,r=10,t=20,b=10), height=380,
                     showlegend=False
                 )
@@ -516,7 +517,7 @@ elif seleccion_menu == name_mra:
                 fig_bar.update_layout(
                     title=t("Total Accumulated Profit by Market","Profit Acumulado por Mercado"),
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
+                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                     xaxis_title="€", yaxis_title="",
                     margin=dict(l=10,r=80,t=40,b=10), height=380,
                     showlegend=False
@@ -546,7 +547,7 @@ elif seleccion_menu == name_mra:
             fig_daily.update_layout(
                 barmode='stack', yaxis_title="Profit (€)",
                 paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                font=dict(family="Inter", color="#475569"),
+                font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                 legend=dict(orientation='h', yanchor='bottom', y=1.01, xanchor='right', x=1, font=dict(size=10)),
                 hovermode='x unified',
                 margin=dict(l=10,r=10,t=50,b=10), height=400
@@ -675,10 +676,10 @@ elif seleccion_menu == name_rt5:
                     hovertemplate="<b>%{y}</b><br>Profit RT5: %{x:,.0f} €<extra></extra>"
                 ))
                 fig.update_layout(
-                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13)),
+                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13, color="#1e293b")),
                     xaxis_title="Total Profit RT5 (€)", yaxis_title="",
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
+                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                     margin=dict(l=10,r=80,t=45,b=10), height=400
                 )
                 fig.update_xaxes(gridcolor="#e2e8f0")
@@ -724,10 +725,10 @@ elif seleccion_menu == name_rt5:
                     hovertemplate="<b>%{x}</b><br>Profit RT5: %{y:,.0f} €<extra></extra>"
                 ))
                 fig.update_layout(
-                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13)),
+                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13, color="#1e293b")),
                     xaxis_title="", yaxis_title="Total Profit RT5 (€)",
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
+                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                     margin=dict(l=10,r=10,t=45,b=10), height=360
                 )
                 fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-30)
@@ -819,7 +820,7 @@ elif seleccion_menu == name_gnera:
             fig_hm.update_layout(
                 paper_bgcolor="#ffffff",
                 plot_bgcolor="#ffffff",
-                font=dict(family="Inter", color="#475569"),
+                font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                 margin=dict(l=10, r=60, t=20, b=60),
                 height=max(220, len(df_hm) * 72 + 80),
                 xaxis=dict(side='bottom', tickangle=-25, tickfont=dict(size=11),
@@ -845,7 +846,7 @@ elif seleccion_menu == name_gnera:
                 fig_bar_g.update_layout(
                     title=t("Total Profit by Installation (€/MW)","Profit Total por Instalación (€/MW)"),
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
+                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                     margin=dict(l=10, r=100, t=45, b=10),
                     height=max(200, len(df_bar_gnera) * 55 + 60),
                     showlegend=False,
@@ -933,7 +934,7 @@ elif seleccion_menu == name_verbund:
             fig_v.update_layout(
                 title=t("Verbund Profit by Installation","Profit Verbund por Instalación"),
                 paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                font=dict(family="Inter", color="#475569"),
+                font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                 xaxis_title="€", yaxis_title="",
                 margin=dict(l=10,r=100,t=50,b=10), height=420,
                 showlegend=False
@@ -1001,10 +1002,10 @@ elif seleccion_menu == name_evo:
                 )
                 fig.update_traces(line=dict(width=2), marker=dict(size=5))
                 fig.update_layout(
-                    title=dict(text=title, font=dict(size=12,color="#e2e8f0")),
+                    title=dict(text=title, font=dict(size=12, color="#1e293b")),
                     xaxis_title="", yaxis_title=y_label,
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
+                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
                     legend=dict(title="", font=dict(size=9), bgcolor="rgba(0,0,0,0)"),
                     margin=dict(l=10,r=10,t=45,b=10), height=380,
                     hovermode='x unified'
