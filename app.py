@@ -410,10 +410,12 @@ elif seleccion_menu == name_mra:
         f_ma, f_tech, f_up = st.columns(3)
         with f_ma:
             qualified_MAs = sorted(allh_mra['MA'].unique()) if not allh_mra.empty else [t('No data','Sin datos')]
-            sel_ma = st.selectbox(t("1. Market Agent (MA)","1. Representante (MA)"), qualified_MAs)
+            default_ma_idx = list(qualified_MAs).index('GNERA') if 'GNERA' in qualified_MAs else 0
+            sel_ma = st.selectbox(t("1. Market Agent (MA)","1. Representante (MA)"), qualified_MAs, index=default_ma_idx)
         with f_tech:
             tech_opts = sorted(allh_mra.loc[allh_mra['MA']==sel_ma,'Tech'].unique()) if sel_ma != t('No data','Sin datos') else [t('No data','Sin datos')]
-            sel_tech = st.selectbox(t("2. Technology","2. Tecnología"), tech_opts)
+            default_tech_idx = list(tech_opts).index('Wind') if 'Wind' in tech_opts else 0
+            sel_tech = st.selectbox(t("2. Technology","2. Tecnología"), tech_opts, index=default_tech_idx)
         with f_up:
             up_rt5 = allh_mra.loc[(allh_mra['MA']==sel_ma) & (allh_mra['Tech']==sel_tech)]
             up_opts = [t('Any UP','Cualquier UP')] + sorted(up_rt5['UP'].unique().tolist())
