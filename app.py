@@ -20,93 +20,59 @@ st.markdown("""
 
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-    /* Fondo general */
-    .stApp { background: #0f1117; }
-    [data-testid="stSidebar"] { background: #161b27 !important; border-right: 1px solid #2a3045; }
-    [data-testid="stSidebar"] * { color: #c9d1e0 !important; }
+    /* Fondo general — blanco roto muy suave */
+    .stApp { background: #f5f7fa; }
+    [data-testid="stSidebar"] {
+        background: #ffffff !important;
+        border-right: 1px solid #e2e8f0;
+        box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+    }
 
     /* Título principal */
-    h1 { 
-        background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #f59e0b 100%);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        font-weight: 700; font-size: 1.8rem !important; letter-spacing: -0.5px;
-        padding-bottom: 0.5rem;
+    h1 {
+        color: #1e293b !important;
+        font-weight: 700; font-size: 1.7rem !important;
+        letter-spacing: -0.5px; padding-bottom: 0.3rem;
     }
+    h1 span.accent { color: #2563eb; }
 
-    /* Cards de sección */
+    /* Headers de sección */
     .section-header {
         display: flex; align-items: center; gap: 10px;
-        background: linear-gradient(90deg, rgba(0,212,255,0.08) 0%, rgba(124,58,237,0.05) 100%);
-        border-left: 3px solid #00d4ff;
-        padding: 12px 18px; border-radius: 0 8px 8px 0;
+        background: #ffffff;
+        border-left: 4px solid #2563eb;
+        border-radius: 0 8px 8px 0;
+        padding: 10px 16px;
         margin: 1.2rem 0 1rem 0;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
     }
-    .section-header h3 { 
-        color: #e2e8f0 !important; font-size: 1.05rem; 
-        font-weight: 600; margin: 0; letter-spacing: 0.2px;
+    .section-header h3 {
+        color: #1e293b !important; font-size: 0.95rem;
+        font-weight: 600; margin: 0; letter-spacing: 0.1px;
     }
 
-    /* Métricas personalizadas */
+    /* Metric cards */
     .metric-card {
-        background: linear-gradient(135deg, #1e2433 0%, #252d40 100%);
-        border: 1px solid #2e3a52; border-radius: 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
         padding: 16px 20px; text-align: center;
-        transition: transform 0.2s, border-color 0.2s;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        transition: transform 0.15s, box-shadow 0.15s;
     }
-    .metric-card:hover { transform: translateY(-2px); border-color: #00d4ff44; }
-    .metric-label { color: #8892a4; font-size: 0.72rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
-    .metric-value { color: #e2e8f0; font-size: 1.5rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-    .metric-value.positive { color: #34d399; }
-    .metric-value.negative { color: #f87171; }
-    .metric-delta { font-size: 0.75rem; margin-top: 4px; color: #64748b; }
-
-    /* Tablas */
-    [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
-    [data-testid="stDataFrame"] table { background: #1a2035 !important; }
-    [data-testid="stDataFrame"] th { 
-        background: #0d1424 !important; color: #94a3b8 !important; 
-        font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.6px;
-        border-bottom: 1px solid #2e3a52 !important;
-    }
-    [data-testid="stDataFrame"] td { 
-        color: #cbd5e1 !important; font-family: 'JetBrains Mono', monospace;
-        font-size: 0.82rem; border-bottom: 1px solid #1e2433 !important;
-    }
-    [data-testid="stDataFrame"] tr:hover td { background: #1e2d4a !important; }
-
-    /* Selectbox y widgets */
-    [data-testid="stSelectbox"] > div > div { 
-        background: #1e2433; border: 1px solid #2e3a52; color: #e2e8f0;
-        border-radius: 8px;
-    }
-    [data-testid="stMultiSelect"] > div > div { background: #1e2433; border: 1px solid #2e3a52; }
-
-    /* Radio buttons */
-    .stRadio > div { gap: 0.3rem; }
-    .stRadio [data-testid="stMarkdownContainer"] p { color: #94a3b8; font-size: 0.85rem; }
-
-    /* Separadores */
-    hr { border-color: #2e3a52 !important; }
-
-    /* Bloques de información */
-    .stInfo { background: rgba(0,212,255,0.06) !important; border: 1px solid rgba(0,212,255,0.2) !important; border-radius: 8px; }
-    .stWarning { background: rgba(245,158,11,0.06) !important; border: 1px solid rgba(245,158,11,0.2) !important; border-radius: 8px; }
-    .stError { background: rgba(248,113,113,0.06) !important; border: 1px solid rgba(248,113,113,0.2) !important; border-radius: 8px; }
-
-    /* Botones */
-    .stButton > button {
-        background: linear-gradient(135deg, #1e3a5f, #0f2744);
-        color: #60a5fa; border: 1px solid #2e4a7a;
-        border-radius: 8px; font-weight: 500; font-size: 0.82rem;
-        transition: all 0.2s;
-    }
-    .stButton > button:hover { background: linear-gradient(135deg, #1e4a7f, #0f3755); border-color: #60a5fa; }
+    .metric-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37,99,235,0.1); }
+    .metric-label { color: #64748b; font-size: 0.70rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+    .metric-value { color: #1e293b; font-size: 1.45rem; font-weight: 700;
+        font-family: 'JetBrains Mono', monospace; }
+    .metric-value.positive { color: #059669; }
+    .metric-value.negative { color: #dc2626; }
+    .metric-delta { font-size: 0.72rem; margin-top: 4px; color: #94a3b8; }
 
     /* Scrollbar */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0f1117; }
-    ::-webkit-scrollbar-thumb { background: #2e3a52; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #3e4a62; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
 
     div.block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
 </style>
@@ -116,33 +82,33 @@ st.markdown("""
 # CONFIGURACIÓN DEL TEMA PLOTLY
 # ==============================================================================
 PLOTLY_THEME = dict(
-    template="plotly_dark",
-    paper_bgcolor="#161b27",
-    plot_bgcolor="#1a2035",
-    font=dict(family="Inter, sans-serif", color="#94a3b8", size=12),
-    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2e3a52", borderwidth=1, font=dict(size=11)),
-    margin=dict(l=10, r=10, t=40, b=10),
-    colorway=["#00d4ff", "#7c3aed", "#f59e0b", "#34d399", "#f87171", "#a78bfa", "#fb923c", "#38bdf8"],
+    template="plotly_white",
+    paper_bgcolor="#ffffff",
+    plot_bgcolor="#f8fafc",
+    font=dict(family="Inter, sans-serif", color="#475569", size=12),
+    legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#e2e8f0", borderwidth=1, font=dict(size=11)),
+    margin=dict(l=10, r=10, t=45, b=10),
+    colorway=["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#ea580c", "#65a30d"],
 )
 
 def base_layout(**extra):
-    """Devuelve un dict de layout limpio para update_layout, sin duplicados."""
+    """Devuelve un dict de layout limpio para update_layout."""
     layout = dict(
-        template="plotly_dark",
-        paper_bgcolor="#161b27",
-        plot_bgcolor="#1a2035",
-        font=dict(family="Inter, sans-serif", color="#94a3b8", size=12),
-        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2e3a52", borderwidth=1, font=dict(size=11)),
-        margin=dict(l=10, r=10, t=40, b=10),
+        template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#f8fafc",
+        font=dict(family="Inter, sans-serif", color="#475569", size=12),
+        legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#e2e8f0", borderwidth=1, font=dict(size=11)),
+        margin=dict(l=10, r=10, t=45, b=10),
     )
     layout.update(extra)
     return layout
 
-C_POS = "#34d399"
-C_NEG = "#f87171"
-C_BASE = "#00d4ff"
+C_POS    = "#059669"
+C_NEG    = "#dc2626"
+C_BASE   = "#2563eb"
 C_ACCENT = "#7c3aed"
-C_WARN = "#f59e0b"
+C_WARN   = "#d97706"
 
 def section_header(icon, title):
     st.markdown(f'<div class="section-header"><h3>{icon} {title}</h3></div>', unsafe_allow_html=True)
@@ -405,8 +371,8 @@ if seleccion_menu == name_main:
             yaxis_title=t("Avg Monthly Profit / MW (€)", "Profit Mensual Medio / MW (€)"),
             height=430,
         ))
-        fig.update_xaxes(gridcolor="#1e2433", tickangle=-35)
-        fig.update_yaxes(gridcolor="#1e2433", zerolinecolor="#4b5563")
+        fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-35)
+        fig.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
         return fig
 
     c1, c2 = st.columns(2)
@@ -527,13 +493,13 @@ elif seleccion_menu == name_mra:
                 ))
                 fig_wf.update_layout(
                     title="", yaxis_title="€/MWh",
-                    paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                    font=dict(family="Inter", color="#94a3b8"),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                    font=dict(family="Inter", color="#475569"),
                     margin=dict(l=10,r=10,t=20,b=10), height=380,
                     showlegend=False
                 )
-                fig_wf.update_xaxes(gridcolor="#1e2433")
-                fig_wf.update_yaxes(gridcolor="#1e2433", zerolinecolor="#4b5563")
+                fig_wf.update_xaxes(gridcolor="#e2e8f0")
+                fig_wf.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
 
                 # Barras acumuladas totales
                 profit_total_data = total_row[[c for c in cols_mkts if c in total_row.index]].sort_values(ascending=False)
@@ -548,14 +514,14 @@ elif seleccion_menu == name_mra:
                 ))
                 fig_bar.update_layout(
                     title=t("Total Accumulated Profit by Market","Profit Acumulado por Mercado"),
-                    paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                    font=dict(family="Inter", color="#94a3b8"),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                    font=dict(family="Inter", color="#475569"),
                     xaxis_title="€", yaxis_title="",
                     margin=dict(l=10,r=80,t=40,b=10), height=380,
                     showlegend=False
                 )
-                fig_bar.update_xaxes(gridcolor="#1e2433")
-                fig_bar.update_yaxes(gridcolor="#1e2433")
+                fig_bar.update_xaxes(gridcolor="#e2e8f0")
+                fig_bar.update_yaxes(gridcolor="#e2e8f0")
 
                 col_wf, col_br = st.columns([1.2, 1])
                 with col_wf: st.plotly_chart(fig_wf, use_container_width=True)
@@ -578,14 +544,14 @@ elif seleccion_menu == name_mra:
                 ))
             fig_daily.update_layout(
                 barmode='stack', yaxis_title="Profit (€)",
-                paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                font=dict(family="Inter", color="#94a3b8"),
+                paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                font=dict(family="Inter", color="#475569"),
                 legend=dict(orientation='h', yanchor='bottom', y=1.01, xanchor='right', x=1, font=dict(size=10)),
                 hovermode='x unified',
                 margin=dict(l=10,r=10,t=50,b=10), height=400
             )
-            fig_daily.update_xaxes(gridcolor="#1e2433")
-            fig_daily.update_yaxes(gridcolor="#1e2433", zerolinecolor="#4b5563")
+            fig_daily.update_xaxes(gridcolor="#e2e8f0")
+            fig_daily.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
             st.plotly_chart(fig_daily, use_container_width=True)
 
             # --- TABLA RESUMEN ---
@@ -710,12 +676,12 @@ elif seleccion_menu == name_rt5:
                 fig.update_layout(
                     title=dict(text=f"<b>{tech}</b>", font=dict(size=13)),
                     xaxis_title="Total Profit RT5 (€)", yaxis_title="",
-                    paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                    font=dict(family="Inter", color="#94a3b8"),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                    font=dict(family="Inter", color="#475569"),
                     margin=dict(l=10,r=80,t=45,b=10), height=400
                 )
-                fig.update_xaxes(gridcolor="#1e2433")
-                fig.update_yaxes(gridcolor="#1e2433")
+                fig.update_xaxes(gridcolor="#e2e8f0")
+                fig.update_yaxes(gridcolor="#e2e8f0")
                 return fig
 
             with col_top_s:
@@ -759,12 +725,12 @@ elif seleccion_menu == name_rt5:
                 fig.update_layout(
                     title=dict(text=f"<b>{tech}</b>", font=dict(size=13)),
                     xaxis_title="", yaxis_title="Total Profit RT5 (€)",
-                    paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                    font=dict(family="Inter", color="#94a3b8"),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                    font=dict(family="Inter", color="#475569"),
                     margin=dict(l=10,r=10,t=45,b=10), height=360
                 )
-                fig.update_xaxes(gridcolor="#1e2433", tickangle=-30)
-                fig.update_yaxes(gridcolor="#1e2433")
+                fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-30)
+                fig.update_yaxes(gridcolor="#e2e8f0")
                 return fig
 
             with col_evo_s:
@@ -803,45 +769,89 @@ elif seleccion_menu == name_gnera:
             for col in [c for c in profit_cols_to_sum if c in df_agg.columns]+['Profit_Total_Extra']:
                 df_agg[col] = df_agg[col] / df_agg['Potencia_MW']
 
-            # Heatmap Plotly
+            # Heatmap Plotly — un único heatmap con todas las columnas incluido TOTAL
             section_header("🌡️", t("Summary (€/MW) Heatmap","Resumen (€/MW) como Heatmap"))
             df_hm = df_agg.set_index('UP').drop(columns=['Potencia_MW'])
             comp_cols = [c for c in df_hm.columns if c != 'Profit_Total_Extra']
-            display_cols = [PROFIT_MAP.get(c,c) for c in comp_cols]
+            all_cols  = comp_cols + (['Profit_Total_Extra'] if 'Profit_Total_Extra' in df_hm.columns else [])
+            display_cols = [PROFIT_MAP.get(c,c) for c in comp_cols] + \
+                           ([t('TOTAL','TOTAL')] if 'Profit_Total_Extra' in df_hm.columns else [])
 
-            z_vals = df_hm[comp_cols].values
+            z_vals = df_hm[all_cols].values
+            # Detectar color del texto según contraste
+            text_vals = [[f"{v:,.0f}" for v in row] for row in z_vals]
+
             fig_hm = go.Figure(go.Heatmap(
                 z=z_vals,
                 x=display_cols,
                 y=df_hm.index.tolist(),
-                colorscale='RdBu',
+                colorscale=[
+                    [0.0,  "#b91c1c"],
+                    [0.35, "#fca5a5"],
+                    [0.5,  "#f8fafc"],
+                    [0.65, "#86efac"],
+                    [1.0,  "#15803d"],
+                ],
                 zmid=0,
-                text=[[f"{v:,.1f}" for v in row] for row in z_vals],
-                texttemplate="%{text}",
-                textfont=dict(size=12, color="white"),
-                hovertemplate="<b>UP: %{y}</b><br><b>Market: %{x}</b><br>%{z:,.2f} €/MW<extra></extra>",
-                colorbar=dict(title="€/MW", tickfont=dict(color="#94a3b8"), title_font=dict(color="#94a3b8"))
+                text=text_vals,
+                texttemplate="<b>%{text}</b>",
+                textfont=dict(size=12),
+                hovertemplate="<b>%{y}</b> · <b>%{x}</b><br>%{z:,.1f} €/MW<extra></extra>",
+                colorbar=dict(
+                    title=dict(text="€/MW", font=dict(color="#475569", size=11)),
+                    tickfont=dict(color="#475569", size=10),
+                    thickness=14, len=0.9,
+                    outlinewidth=0,
+                    bgcolor="rgba(255,255,255,0)",
+                )
             ))
 
-            # Columna total aparte
+            # Línea vertical separando componentes del total
             if 'Profit_Total_Extra' in df_hm.columns:
-                tot_vals = df_hm[['Profit_Total_Extra']].values
-                fig_hm.add_trace(go.Heatmap(
-                    z=tot_vals, x=['TOTAL'], y=df_hm.index.tolist(),
-                    colorscale='RdYlGn', zmid=df_hm['Profit_Total_Extra'].mean(),
-                    text=[[f"<b>{v:,.1f}</b>" for v in row] for row in tot_vals],
-                    texttemplate="%{text}", textfont=dict(size=13, color="white"),
-                    showscale=False,
-                    hovertemplate="<b>UP: %{y}</b><br>TOTAL: %{z:,.2f} €/MW<extra></extra>"
-                ))
+                n_comp = len(comp_cols)
+                fig_hm.add_shape(
+                    type="line", xref="x", yref="paper",
+                    x0=n_comp - 0.5, x1=n_comp - 0.5, y0=0, y1=1,
+                    line=dict(color="#94a3b8", width=2, dash="dot")
+                )
 
             fig_hm.update_layout(
-                paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                font=dict(family="Inter", color="#94a3b8"),
-                margin=dict(l=10,r=10,t=30,b=10), height=320,
-                xaxis=dict(side='bottom', tickangle=-30)
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                font=dict(family="Inter", color="#475569"),
+                margin=dict(l=10, r=60, t=20, b=60),
+                height=max(220, len(df_hm) * 72 + 80),
+                xaxis=dict(side='bottom', tickangle=-25, tickfont=dict(size=11),
+                           gridcolor="rgba(0,0,0,0)"),
+                yaxis=dict(tickfont=dict(size=11), gridcolor="rgba(0,0,0,0)"),
             )
             st.plotly_chart(fig_hm, use_container_width=True)
+
+            # Gráfico de barras del TOTAL por UP debajo
+            if 'Profit_Total_Extra' in df_hm.columns:
+                df_bar_gnera = df_hm[['Profit_Total_Extra']].reset_index()
+                df_bar_gnera.columns = ['UP', 'Total_EuroMW']
+                df_bar_gnera = df_bar_gnera.sort_values('Total_EuroMW', ascending=True)
+                bar_colors = [C_POS if v >= 0 else C_NEG for v in df_bar_gnera['Total_EuroMW']]
+                fig_bar_g = go.Figure(go.Bar(
+                    x=df_bar_gnera['Total_EuroMW'], y=df_bar_gnera['UP'],
+                    orientation='h',
+                    marker_color=bar_colors,
+                    text=[f"{v:,.0f} €/MW" for v in df_bar_gnera['Total_EuroMW']],
+                    textposition='outside',
+                    hovertemplate="<b>%{y}</b><br>Total: %{x:,.1f} €/MW<extra></extra>"
+                ))
+                fig_bar_g.update_layout(
+                    title=t("Total Profit by Installation (€/MW)","Profit Total por Instalación (€/MW)"),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                    font=dict(family="Inter", color="#475569"),
+                    margin=dict(l=10, r=100, t=45, b=10),
+                    height=max(200, len(df_bar_gnera) * 55 + 60),
+                    showlegend=False,
+                    xaxis=dict(gridcolor="#e2e8f0", zerolinecolor="#94a3b8"),
+                    yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+                )
+                st.plotly_chart(fig_bar_g, use_container_width=True)
 
     except Exception as e:
         st.error(f"Error Gnera: {e}")
@@ -921,14 +931,14 @@ elif seleccion_menu == name_verbund:
             ))
             fig_v.update_layout(
                 title=t("Verbund Profit by Installation","Profit Verbund por Instalación"),
-                paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                font=dict(family="Inter", color="#94a3b8"),
+                paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                font=dict(family="Inter", color="#475569"),
                 xaxis_title="€", yaxis_title="",
                 margin=dict(l=10,r=100,t=50,b=10), height=420,
                 showlegend=False
             )
-            fig_v.update_xaxes(gridcolor="#1e2433")
-            fig_v.update_yaxes(gridcolor="#1e2433")
+            fig_v.update_xaxes(gridcolor="#e2e8f0")
+            fig_v.update_yaxes(gridcolor="#e2e8f0")
             st.plotly_chart(fig_v, use_container_width=True)
 
     except Exception as e:
@@ -992,14 +1002,14 @@ elif seleccion_menu == name_evo:
                 fig.update_layout(
                     title=dict(text=title, font=dict(size=12,color="#e2e8f0")),
                     xaxis_title="", yaxis_title=y_label,
-                    paper_bgcolor="#161b27", plot_bgcolor="#1a2035",
-                    font=dict(family="Inter", color="#94a3b8"),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                    font=dict(family="Inter", color="#475569"),
                     legend=dict(title="", font=dict(size=9), bgcolor="rgba(0,0,0,0)"),
                     margin=dict(l=10,r=10,t=45,b=10), height=380,
                     hovermode='x unified'
                 )
-                fig.update_xaxes(gridcolor="#1e2433", tickangle=-35, tickfont=dict(size=9))
-                fig.update_yaxes(gridcolor="#1e2433")
+                fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-35, tickfont=dict(size=9))
+                fig.update_yaxes(gridcolor="#e2e8f0")
                 return fig
 
             with c_evo1:
