@@ -1280,40 +1280,54 @@ elif seleccion_menu == name_supply:
             sc_data['abs_profit'] = sc_data['Total_Profit_i'].abs().clip(lower=1)
             sc_data['profit_positive'] = sc_data['Total_Profit_i'] >= 0
 
+            # Top 5 mejores y top 5 peores (por profit) recibirán etiqueta
+            top5_label = set(sc_data.nlargest(5, 'Total_Profit_i')['MA'].tolist())
+            bot5_label = set(sc_data.nsmallest(5, 'Total_Profit_i')['MA'].tolist())
+            labeled_mas = top5_label | bot5_label
+            sc_data['show_label'] = sc_data['MA'].isin(labeled_mas)
+
+            abs_max = sc_data['abs_profit'].max()
+
             fig_sc = go.Figure()
+
             for positive, color, name_ in [
                 (True,  C_POS, t("Profit > 0","Beneficio > 0")),
                 (False, C_NEG, t("Profit < 0","Pérdida")),
             ]:
-                sub = sc_data[sc_data['profit_positive'] == positive]
-                if sub.empty: continue
-                fig_sc.add_trace(go.Scatter(
-                    x=sub['Share_i_pct'],
-                    y=sub['Profit_per_MWh_i'],
-                    mode='markers+text',
-                    marker=dict(
-                        size=np.sqrt(sub['abs_profit']) / np.sqrt(sub['abs_profit'].max()) * 45 + 8,
-                        color=color, opacity=0.75,
-                        line=dict(color='white', width=1)),
-                    text=sub['MA'],
-                    textposition='top center',
-                    textfont=dict(size=9, color="#475569"),
-                    name=name_,
-                    customdata=np.stack([
-                        sub['Total_Profit_i'],
-                        sub['Inc_vs_Spot_pct'],
-                        sub['Vol_Abs_i']
-                    ], axis=-1),
-                    hovertemplate=(
-                        "<b>%{text}</b><br>"
-                        "Cuota intra: %{x:.1f}%<br>"
-                        "€/MWh: %{y:.3f}<br>"
-                        "Profit: %{customdata[0]:,.0f} €<br>"
-                        "Sobre-ingreso vs spot: %{customdata[1]:.2f}%<br>"
-                        "Volumen: %{customdata[2]:,.0f} MWh<extra></extra>")
-                ))
+                for labeled in [False, True]:
+                    sub = sc_data[(sc_data['profit_positive'] == positive) & (sc_data['show_label'] == labeled)]
+                    if sub.empty: continue
+                    fig_sc.add_trace(go.Scatter(
+                        x=sub['Share_i_pct'],
+                        y=sub['Profit_per_MWh_i'],
+                        mode='markers+text' if labeled else 'markers',
+                        marker=dict(
+                            size=np.sqrt(sub['abs_profit']) / np.sqrt(abs_max) * 45 + 8,
+                            color=color,
+                            opacity=0.85 if labeled else 0.55,
+                            line=dict(color='white', width=1.5 if labeled else 0.8)),
+                        text=sub['MA'] if labeled else None,
+                        textposition='top center',
+                        textfont=dict(size=9, color="#1e293b", family="Inter"),
+                        name=name_,
+                        showlegend=(not labeled),   # una sola entrada por color en la leyenda
+                        legendgroup=name_,
+                        customdata=np.stack([
+                            sub['Total_Profit_i'],
+                            sub['Inc_vs_Spot_pct'],
+                            sub['Vol_Abs_i'],
+                            sub['MA'],
+                        ], axis=-1),
+                        hovertemplate=(
+                            "<b>%{customdata[3]}</b><br>"
+                            "Cuota intra: %{x:.2f}%<br>"
+                            "€/MWh: %{y:.3f}<br>"
+                            "Profit: %{customdata[0]:,.0f} €<br>"
+                            "Sobre-ingreso vs spot: %{customdata[1]:.2f}%<br>"
+                            "Volumen: %{customdata[2]:,.0f} MWh<extra></extra>")
+                    ))
 
-            # Líneas de referencia en (0,0) del eje Y y media de cuota
+            # Líneas de referencia
             fig_sc.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1.5)
             avg_share = sc_data['Share_i_pct'].mean()
             fig_sc.add_vline(x=avg_share, line_dash="dot", line_color="#94a3b8", line_width=1.5,
