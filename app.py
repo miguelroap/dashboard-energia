@@ -1847,7 +1847,7 @@ elif seleccion_menu == name_portfolio:
         @st.cache_data
         def find_local_snapshot():
             """Busca en disco el fichero ANALISIS MRAexport... más reciente."""
-            candidates = sorted(glob.glob('ANALISIS_MRAexport_unidades-de-programacion*.xlsx'), reverse=True)
+            candidates = sorted(glob.glob('ANALISIS MRAexport_unidades-de-programacion*.xlsx'), reverse=True)
             return candidates[0] if candidates else None
 
         # ── PANEL DE CARGA ────────────────────────────────────────────────────
