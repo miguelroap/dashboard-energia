@@ -436,14 +436,14 @@ if seleccion_menu == name_main:
                 fig_rk.update_yaxes(gridcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig_rk, use_container_width=True)
 
-    # ── ANIMATED BAR CHART RACE: evolución diaria del profit acumulado por MA ─
+    # ── ANIMATED BAR CHART RACE: ranking diario de profit/MW por MA ──────────
     st.markdown("---")
-    section_header("🎬", t("Animated Ranking Evolution – Cumulative Profit/MW by MA",
-                            "Evolución Animada del Ranking – Profit/MW Acumulado por Representante"))
+    section_header("🎬", t("Animated Daily Ranking – Profit/MW by MA",
+                            "Ranking Diario Animado – Profit/MW por Representante"))
 
     tech_anim = st.radio(
         t("Technology for animation:","Tecnología para la animación:"),
-        options=[t for t in ['Solar PV','Wind'] if t in allh_main2['Tech'].unique()],
+        options=[tc for tc in ['Solar PV','Wind'] if tc in allh_main2['Tech'].unique()],
         horizontal=True, key='anim_tech'
     )
 
@@ -453,94 +453,116 @@ if seleccion_menu == name_main:
         df_anim['Total_Profit'] / df_anim['Power MW'].replace(0, np.nan)
     ).fillna(0)
 
-    # Acumular por MA y día
+    # Profit diario (NO acumulado) por MA
     daily_anim = df_anim.groupby(['Day','MA'], observed=True)['Profit_per_MW_day'].sum().reset_index()
     daily_anim = daily_anim.sort_values('Day')
-    daily_anim['Cum_Profit_MW'] = daily_anim.groupby('MA', observed=True)['Profit_per_MW_day'].cumsum()
     daily_anim['MA'] = daily_anim['MA'].astype(str)
     daily_anim['Day_str'] = daily_anim['Day'].dt.strftime('%Y-%m-%d')
 
-    # Para cada día, tomar el top 12
+    # Top 12 por día
     frames_list = []
     for day_val in sorted(daily_anim['Day_str'].unique()):
-        snapshot = daily_anim[daily_anim['Day_str'] == day_val].nlargest(12, 'Cum_Profit_MW')
-        snapshot = snapshot.sort_values('Cum_Profit_MW', ascending=True)
-        frames_list.append(snapshot)
+        snap = daily_anim[daily_anim['Day_str'] == day_val].nlargest(12, 'Profit_per_MW_day')
+        snap = snap.sort_values('Profit_per_MW_day', ascending=True)
+        frames_list.append(snap)
 
     if frames_list:
         color_anim = '#f59e0b' if tech_anim == 'Solar PV' else '#34d399'
         r_a, g_a, b_a = px.colors.hex_to_rgb(color_anim)
 
+        # Rango fijo del eje X: máximo de todos los días
+        x_max = daily_anim['Profit_per_MW_day'].max() * 1.18
+
+        first = frames_list[0]
         fig_anim = go.Figure(
             data=[go.Bar(
-                x=frames_list[0]['Cum_Profit_MW'],
-                y=frames_list[0]['MA'],
+                x=first['Profit_per_MW_day'],
+                y=first['MA'],
                 orientation='h',
                 marker_color=color_anim,
-                text=[f"{v:,.0f} €/MW" for v in frames_list[0]['Cum_Profit_MW']],
+                text=[f"{v:,.1f} €/MW" for v in first['Profit_per_MW_day']],
                 textposition='outside',
             )],
             layout=go.Layout(
                 title=dict(
-                    text=f"<b>{tech_anim}</b> · " + t('Cumulative Profit/MW – ','Profit/MW Acumulado – ') + frames_list[0]['Day_str'].iloc[0],
-                    font=dict(size=13, color="#1e293b")),
-                xaxis=dict(title=t("Cumulative Profit/MW (€)","Profit/MW Acumulado (€)"),
-                           gridcolor="#e2e8f0", range=[0, daily_anim['Cum_Profit_MW'].max() * 1.15]),
-                yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+                    text=f"<b>{tech_anim}</b> · " + t('Daily Profit/MW – ','Profit/MW Diario – ') + (first['Day_str'].iloc[0] if not first.empty else ''),
+                    font=dict(size=13, color="#1e293b"), x=0, xanchor='left'),
+                xaxis=dict(
+                    title=t("Daily Profit/MW (€)","Profit/MW Diario (€)"),
+                    gridcolor="#e2e8f0", range=[0, x_max],
+                    fixedrange=True),
+                yaxis=dict(gridcolor="rgba(0,0,0,0)", fixedrange=True),
                 paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
                 font=dict(family="Inter", color="#475569"),
                 title_font=dict(family="Inter", color="#1e293b", size=13),
-                margin=dict(l=10, r=100, t=55, b=10),
-                height=460,
-                showlegend=False,
+                # Botones fijos en esquina superior izquierda, fuera del área del gráfico
                 updatemenus=[dict(
                     type="buttons", showactive=False,
-                    y=1.12, x=0.0, xanchor="left",
+                    direction="left",
+                    x=0.0, xanchor="left",
+                    y=1.18, yanchor="top",
+                    pad=dict(r=8, t=0),
+                    bgcolor="#f1f5f9", bordercolor="#e2e8f0", borderwidth=1,
+                    font=dict(size=12, color="#1e293b"),
                     buttons=[
-                        dict(label=t("▶ Play","▶ Play"),
+                        dict(label="▶  Play",
                              method="animate",
-                             args=[None, dict(frame=dict(duration=300, redraw=True),
-                                              fromcurrent=True, transition=dict(duration=150))]),
-                        dict(label=t("⏸ Pause","⏸ Pausa"),
+                             args=[None, dict(frame=dict(duration=400, redraw=True),
+                                              fromcurrent=True,
+                                              transition=dict(duration=200, easing="linear"))]),
+                        dict(label="⏸  Pause",
                              method="animate",
                              args=[[None], dict(frame=dict(duration=0, redraw=False),
-                                                mode="immediate", transition=dict(duration=0))])
+                                                mode="immediate",
+                                                transition=dict(duration=0))])
                     ]
                 )],
                 sliders=[dict(
                     steps=[dict(
                         method="animate",
-                        args=[[f"frame_{i}"], dict(mode="immediate",
-                              frame=dict(duration=300, redraw=True),
-                              transition=dict(duration=150))],
+                        args=[[f"frame_{i}"],
+                              dict(mode="immediate",
+                                   frame=dict(duration=400, redraw=True),
+                                   transition=dict(duration=200))],
                         label=frames_list[i]['Day_str'].iloc[0] if not frames_list[i].empty else str(i)
                     ) for i in range(len(frames_list))],
-                    transition=dict(duration=150),
-                    x=0, y=0, currentvalue=dict(
+                    transition=dict(duration=200),
+                    x=0.0, y=-0.06,
+                    len=1.0,
+                    bgcolor="#f1f5f9",
+                    bordercolor="#e2e8f0",
+                    activebgcolor=color_anim,
+                    currentvalue=dict(
                         font=dict(size=11, color="#475569"),
-                        prefix=t("Date: ","Fecha: "), visible=True, xanchor="center"),
-                    len=1.0
-                )]
+                        prefix=t("Date: ","Fecha: "),
+                        visible=True, xanchor="center"),
+                )],
+                margin=dict(l=10, r=110, t=90, b=60),
+                height=500,
+                showlegend=False,
             ),
             frames=[go.Frame(
                 data=[go.Bar(
-                    x=snap['Cum_Profit_MW'],
+                    x=snap['Profit_per_MW_day'],
                     y=snap['MA'],
                     orientation='h',
-                    marker_color=[f"rgba({r_a},{g_a},{b_a},{0.4 + 0.6*(v/snap['Cum_Profit_MW'].max()) if snap['Cum_Profit_MW'].max()>0 else 0.7})"
-                                  for v in snap['Cum_Profit_MW']],
-                    text=[f"{v:,.0f} €/MW" for v in snap['Cum_Profit_MW']],
+                    marker_color=[
+                        f"rgba({r_a},{g_a},{b_a},{max(0.35, v/snap['Profit_per_MW_day'].max()) if snap['Profit_per_MW_day'].max()>0 else 0.7})"
+                        for v in snap['Profit_per_MW_day']],
+                    text=[f"{v:,.1f} €/MW" for v in snap['Profit_per_MW_day']],
                     textposition='outside',
                 )],
                 layout=go.Layout(
-                    title=dict(text=f"<b>{tech_anim}</b> · " + t('Cumulative Profit/MW – ','Profit/MW Acumulado – ') + snap['Day_str'].iloc[0])
+                    title=dict(
+                        text=f"<b>{tech_anim}</b> · " + t('Daily Profit/MW – ','Profit/MW Diario – ') + (snap['Day_str'].iloc[0] if not snap.empty else ''),
+                        font=dict(size=13, color="#1e293b"), x=0, xanchor='left'),
                 ),
                 name=f"frame_{i}"
             ) for i, snap in enumerate(frames_list)]
         )
         st.plotly_chart(fig_anim, use_container_width=True)
-        st.caption(t("Use the ▶ Play button or drag the slider to navigate through days.",
-                     "Usa el botón ▶ Play o arrastra el slider para navegar por los días."))
+        st.caption(t("Press ▶ Play or drag the slider to navigate day by day.",
+                     "Pulsa ▶ Play o arrastra el slider para navegar día a día."))
 
     gc.collect()
 
@@ -1121,7 +1143,7 @@ elif seleccion_menu == name_verbund:
 elif seleccion_menu == name_evo:
     section_header("📈", t("Revenue Evolution by Market Agent and Technology","Evolución Ingresos por Representante y Tecnología"))
     try:
-        col_e1, col_e2 = st.columns(2)
+        col_e1, col_e2, col_e3 = st.columns([2, 2, 1])
         with col_e1:
             ma_input = st.selectbox(
                 t("Market Agent (MA):","Representante (MA):"),
@@ -1134,6 +1156,13 @@ elif seleccion_menu == name_evo:
                 sorted(allh['Tech'].unique()),
                 index=list(sorted(allh['Tech'].unique())).index('Wind') if 'Wind' in allh['Tech'].unique() else 0
             )
+        with col_e3:
+            granularity = st.radio(
+                t("Granularity","Granularidad"),
+                options=[t("Monthly","Mensual"), t("Daily","Diario")],
+                index=0, key='evo_granularity'
+            )
+        is_daily_evo = (granularity == t("Daily","Diario"))
 
         df_evo_temp = allh.loc[(allh['MA']==ma_input) & (allh['Tech']==tech_input)]
         mask_active_ups = (df_evo_temp['Profit_rt']!=0) | (df_evo_temp['Profit_b']!=0) | (df_evo_temp['Profit_t']!=0)
@@ -1143,17 +1172,25 @@ elif seleccion_menu == name_evo:
         if df_evo.empty:
             st.info(t("No data for this combination.","No hay datos para esta combinación."))
         else:
-            df_evo['YearMonth'] = df_evo['Day'].dt.to_period('M').astype(str)
             df_evo['Total_Profit'] = df_evo[['Profit_rt','Profit_tr_s','Profit_t','Profit_rr','Profit_b','Profit_se']].sum(axis=1)
 
-            df_evo_m = df_evo.groupby(['UP','YearMonth'], observed=True).agg(
+            # Agrupar según granularidad
+            if is_daily_evo:
+                df_evo['x_axis'] = df_evo['Day'].dt.strftime('%Y-%m-%d')
+                group_col = 'x_axis'
+            else:
+                df_evo['x_axis'] = df_evo['Day'].dt.to_period('M').astype(str)
+                group_col = 'x_axis'
+
+            df_evo_m = df_evo.groupby(['UP', group_col], observed=True).agg(
                 Total_Profit=('Total_Profit','sum'), Total_Energy=('Energy_p48','sum')
-            ).reset_index().sort_values('YearMonth')
-            df_evo_m['Profit_per_MWh'] = df_evo_m['Total_Profit'] / df_evo_m['Total_Energy'].replace(0,np.nan)
+            ).reset_index().sort_values(group_col)
+            df_evo_m.rename(columns={group_col: 'x_axis'}, inplace=True)
+            df_evo_m['Profit_per_MWh'] = df_evo_m['Total_Profit'] / df_evo_m['Total_Energy'].replace(0, np.nan)
             df_evo_m['Total_Profit_k'] = df_evo_m['Total_Profit'] / 1000
             df_evo_m['UP'] = df_evo_m['UP'].astype(str)
 
-            # €/MW mensual: join con potencia instalada
+            # €/MW: join con potencia instalada
             df_evo_m = pd.merge(df_evo_m, df_power, on='UP', how='left')
             df_evo_m['Profit_per_MW'] = (
                 df_evo_m['Total_Profit'] / df_evo_m['Power MW'].replace(0, np.nan)
@@ -1164,39 +1201,45 @@ elif seleccion_menu == name_evo:
                 top_ups = df_evo_m.groupby('UP', observed=True)['Total_Profit'].sum().nlargest(20).index
                 df_evo_m = df_evo_m[df_evo_m['UP'].isin(top_ups)]
 
-            # 4 gráficos en 2x2
-            c_evo1, c_evo2 = st.columns(2)
-            c_evo3, c_evo4 = st.columns(2)
-
             def make_line(df, y_col, title, y_label, color_col='UP'):
+                tick_angle = -35 if not is_daily_evo else -50
+                tick_size  = 9   if not is_daily_evo else 8
                 fig = px.line(
-                    df, x='YearMonth', y=y_col, color=color_col,
-                    markers=True,
+                    df, x='x_axis', y=y_col, color=color_col,
+                    markers=not is_daily_evo,
                     color_discrete_sequence=px.colors.qualitative.Set2,
-                    hover_data={'YearMonth':True, y_col:':.2f', color_col:True}
                 )
-                fig.update_traces(line=dict(width=2), marker=dict(size=5))
+                fig.update_traces(line=dict(width=2), marker=dict(size=5 if not is_daily_evo else 0))
                 fig.update_layout(
                     title=dict(text=title, font=dict(size=12, color="#1e293b")),
                     xaxis_title="", yaxis_title=y_label,
                     paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                    font=dict(family="Inter", color="#475569"),
+                    title_font=dict(family="Inter", color="#1e293b", size=13),
                     legend=dict(title="", font=dict(size=9), bgcolor="rgba(0,0,0,0)"),
-                    margin=dict(l=10,r=10,t=45,b=10), height=380,
+                    margin=dict(l=10,r=10,t=45,b=10), height=360,
                     hovermode='x unified'
                 )
-                fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-35, tickfont=dict(size=9))
+                fig.update_xaxes(gridcolor="#e2e8f0", tickangle=tick_angle, tickfont=dict(size=tick_size))
                 fig.update_yaxes(gridcolor="#e2e8f0")
                 return fig
 
+            # Layout 2×2: €/MWh y €/MW arriba; Producción y Profit k€ abajo
+            c_evo1, c_evo2 = st.columns(2)
+            c_evo3, c_evo4 = st.columns(2)
+
             with c_evo1:
-                st.plotly_chart(make_line(df_evo_m,'Profit_per_MWh',t("Profit (€/MWh)","Evolución Profit (€/MWh)"),"€/MWh"), use_container_width=True)
+                st.plotly_chart(make_line(df_evo_m,'Profit_per_MWh',
+                    t("Profit (€/MWh)","Evolución Profit (€/MWh)"),"€/MWh"), use_container_width=True)
             with c_evo2:
-                st.plotly_chart(make_line(df_evo_m,'Total_Energy',t("Production (MWh)","Producción (MWh)"),"MWh"), use_container_width=True)
+                st.plotly_chart(make_line(df_evo_m,'Profit_per_MW',
+                    t("Profit (€/MW installed)","Profit (€/MW instalado)"),"€/MW"), use_container_width=True)
             with c_evo3:
-                st.plotly_chart(make_line(df_evo_m,'Total_Profit_k',t("Total Profit (k€)","Profit Total (k€)"),"k€"), use_container_width=True)
+                st.plotly_chart(make_line(df_evo_m,'Total_Energy',
+                    t("Production (MWh)","Producción (MWh)"),"MWh"), use_container_width=True)
             with c_evo4:
-                st.plotly_chart(make_line(df_evo_m,'Profit_per_MW',t("Profit (€/MW installed)","Profit (€/MW instalado)"),"€/MW"), use_container_width=True)
+                st.plotly_chart(make_line(df_evo_m,'Total_Profit_k',
+                    t("Total Profit (k€)","Profit Total (k€)"),"k€"), use_container_width=True)
 
     except Exception as e:
         st.warning(f"{t('Error:','Error:')} {e}")
