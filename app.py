@@ -1969,19 +1969,44 @@ elif seleccion_menu == name_portfolio:
                 ma_total.columns = ['MA','Total MW']
                 ma_total = ma_total.sort_values('Total MW', ascending=False)
 
-                # Selector de top N
-                col_f1, col_f2 = st.columns([1,3])
+                # Filtros de visualización
+                col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
                 with col_f1:
-                    top_n = st.slider(t("Top N MAs to show","Top N representantes"), 5, 30, 15)
-                top_mas = ma_total.head(top_n)['MA'].tolist()
-                df_plot = ma_tech[ma_tech['MA'].isin(top_mas)].copy()
+                    top_n = st.slider(t("Top N MAs","Top N representantes"), 5, 40, 15)
+                with col_f2:
+                    hide_incumbents = st.checkbox(
+                        t("Exclude incumbents (Iberdrola, Endesa, Naturgy, EDP)",
+                          "Excluir incumbentes (Iberdrola, Endesa, Naturgy, EDP)"),
+                        value=True
+                    )
+
+                INCUMBENTS = {'IBERDROLA','ENDESA','NATURGY','EDP'}
+
+                if hide_incumbents:
+                    # Filtrar cualquier MA cuyo nombre contenga alguno de estos strings
+                    mask_inc = ma_total['MA'].str.upper().apply(
+                        lambda x: any(inc in x for inc in INCUMBENTS)
+                    )
+                    ma_total_filt = ma_total[~mask_inc]
+                    df_gen_filt = df_gen[~df_gen['MA'].str.upper().apply(
+                        lambda x: any(inc in x for inc in INCUMBENTS)
+                    )]
+                else:
+                    ma_total_filt = ma_total
+                    df_gen_filt = df_gen
+
+                # Top N ordenados de mayor a menor
+                top_mas = ma_total_filt.head(top_n)['MA'].tolist()  # ya ordenado desc
+                ma_tech_filt = df_gen_filt.groupby(['MA','Tech'], observed=True)['Power MW'].sum().reset_index()
+                df_plot = ma_tech_filt[ma_tech_filt['MA'].isin(top_mas)].copy()
+                # Orden categórico de mayor a menor total
                 df_plot['MA'] = pd.Categorical(df_plot['MA'], categories=top_mas, ordered=True)
                 df_plot = df_plot.sort_values('MA')
 
-                # KPI cards
-                total_mw_market = ma_total['Total MW'].sum()
-                top1 = ma_total.iloc[0]
-                renewables_total = df_gen[df_gen['Tech'].isin(RENEWABLES)]['Power MW'].sum()
+                # KPI cards (sobre datos filtrados)
+                total_mw_market = ma_total_filt['Total MW'].sum()
+                top1 = ma_total_filt.iloc[0] if not ma_total_filt.empty else pd.Series({'MA':'—','Total MW':0})
+                renewables_total = df_gen_filt[df_gen_filt['Tech'].isin(RENEWABLES)]['Power MW'].sum()
                 k1,k2,k3,k4 = st.columns(4)
                 with k1: st.markdown(metric_card(
                     t("Total Market (gen)","Total Mercado (gen)"),
@@ -1994,14 +2019,17 @@ elif seleccion_menu == name_portfolio:
                     f"{renewables_total/1000:,.1f}", unit=" GW"), unsafe_allow_html=True)
                 with k4: st.markdown(metric_card(
                     t("Active MAs","MAs activos"),
-                    f"{len(ma_total):,}"), unsafe_allow_html=True)
+                    f"{len(ma_total_filt):,}"), unsafe_allow_html=True)
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # Stacked bar: MW por tecnología para cada MA
+                # Stacked bar: MW por tecnología para cada MA, ordenado de mayor a menor
                 section_header("📊", t("Portfolio by MA (MW by Technology)",
                                         "Portfolio por Representante (MW por Tecnología)"))
 
-                all_techs_in_data = df_plot['Tech'].unique().tolist()
+                # Ordenar techs por total desc para que la leyenda sea coherente
+                tech_totals = df_plot.groupby('Tech', observed=True)['Power MW'].sum().sort_values(ascending=False)
+                all_techs_in_data = tech_totals.index.tolist()
+
                 fig_stack = go.Figure()
                 for tech in all_techs_in_data:
                     sub = df_plot[df_plot['Tech'] == tech]
@@ -2028,7 +2056,7 @@ elif seleccion_menu == name_portfolio:
                 # Treemap: toda la generación, MA > Tech > MW
                 st.markdown("---")
                 section_header("🌳", t("Market Treemap (MW)", "Treemap del Mercado (MW)"))
-                df_tree = df_gen[df_gen['MA'].isin(top_mas)].groupby(
+                df_tree = df_gen_filt[df_gen_filt['MA'].isin(top_mas)].groupby(
                     ['MA','Tech'], observed=True)['Power MW'].sum().reset_index()
                 df_tree = df_tree[df_tree['Power MW'] > 0]
                 fig_tree = px.treemap(
@@ -2048,7 +2076,7 @@ elif seleccion_menu == name_portfolio:
                 # Tabla resumen: MA × tecnología (pivot)
                 st.markdown("---")
                 section_header("📋", t("Summary Table (MW)","Tabla Resumen (MW)"))
-                pivot = ma_tech[ma_tech['MA'].isin(top_mas)].pivot_table(
+                pivot = ma_tech_filt[ma_tech_filt['MA'].isin(top_mas)].pivot_table(
                     index='MA', columns='Tech', values='Power MW',
                     aggfunc='sum', fill_value=0).round(1)
                 pivot['TOTAL'] = pivot.sum(axis=1)
