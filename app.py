@@ -385,6 +385,163 @@ if seleccion_menu == name_main:
     with c2:
         fig_wind = make_boxplot('Wind', '#34d399', '#f87171')
         if fig_wind: st.plotly_chart(fig_wind, use_container_width=True)
+
+    # ── RANKING: días como mejor MA por tecnología ────────────────────────────
+    st.markdown("---")
+    section_header("🏅", t("Days as Best MA by Technology (selected period)",
+                            "Días como mejor representante por Tecnología (periodo seleccionado)"))
+
+    profit_cols_main = ['Profit_rt','Profit_tr_s','Profit_t','Profit_rr','Profit_b','Profit_se']
+    allh_main2 = allh_main.copy()
+    allh_main2['Total_Profit'] = allh_main2[[c for c in profit_cols_main if c in allh_main2.columns]].sum(axis=1)
+
+    # Profit diario por MA y tecnología
+    daily_ma = allh_main2.groupby(['Day','Tech','MA'], observed=True)['Total_Profit'].sum().reset_index()
+
+    # Para cada (Day, Tech) → el MA con más profit
+    idx_best = daily_ma.groupby(['Day','Tech'], observed=True)['Total_Profit'].idxmax()
+    best_daily = daily_ma.loc[idx_best].copy()
+    best_daily = best_daily[best_daily['Total_Profit'] > 0]   # solo días con profit positivo
+
+    # Contar días como mejor
+    ranking = best_daily.groupby(['Tech','MA'], observed=True).size().reset_index(name='Days_as_Best')
+    ranking['MA'] = ranking['MA'].astype(str)
+
+    techs_available = [t for t in ['Solar PV','Wind'] if t in ranking['Tech'].unique()]
+    if techs_available:
+        rank_cols = st.columns(len(techs_available))
+        colors_tech = {'Solar PV':'#f59e0b', 'Wind':'#34d399'}
+        for idx_t, tech in enumerate(techs_available):
+            rk = ranking[ranking['Tech'] == tech].sort_values('Days_as_Best', ascending=True).tail(15)
+            with rank_cols[idx_t]:
+                fig_rk = go.Figure(go.Bar(
+                    x=rk['Days_as_Best'], y=rk['MA'],
+                    orientation='h',
+                    marker=dict(
+                        color=rk['Days_as_Best'],
+                        colorscale=[[0, f"rgba{tuple(list(px.colors.hex_to_rgb(colors_tech[tech]))+[0.3])}"],
+                                    [1, colors_tech[tech]]],
+                        showscale=False),
+                    text=rk['Days_as_Best'].astype(str) + t(' days',' días'),
+                    textposition='outside',
+                    hovertemplate="<b>%{y}</b><br>" + t('Days as best:','Días como mejor:') + " %{x}<extra></extra>"
+                ))
+                fig_rk.update_layout(**base_layout(
+                    title=dict(text=f"<b>{tech}</b> · " + t('Days as best MA','Días como mejor MA'),
+                               font=dict(size=13, color="#1e293b")),
+                    xaxis_title=t("Days","Días"), height=max(300, len(rk)*38 + 80),
+                    margin=dict(l=10, r=80, t=45, b=10), showlegend=False,
+                ))
+                fig_rk.update_xaxes(gridcolor="#e2e8f0")
+                fig_rk.update_yaxes(gridcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_rk, use_container_width=True)
+
+    # ── ANIMATED BAR CHART RACE: evolución diaria del profit acumulado por MA ─
+    st.markdown("---")
+    section_header("🎬", t("Animated Ranking Evolution – Cumulative Profit/MW by MA",
+                            "Evolución Animada del Ranking – Profit/MW Acumulado por Representante"))
+
+    tech_anim = st.radio(
+        t("Technology for animation:","Tecnología para la animación:"),
+        options=[t for t in ['Solar PV','Wind'] if t in allh_main2['Tech'].unique()],
+        horizontal=True, key='anim_tech'
+    )
+
+    df_anim = allh_main2[allh_main2['Tech'] == tech_anim].copy()
+    df_anim = pd.merge(df_anim, df_power, on='UP', how='left')
+    df_anim['Profit_per_MW_day'] = (
+        df_anim['Total_Profit'] / df_anim['Power MW'].replace(0, np.nan)
+    ).fillna(0)
+
+    # Acumular por MA y día
+    daily_anim = df_anim.groupby(['Day','MA'], observed=True)['Profit_per_MW_day'].sum().reset_index()
+    daily_anim = daily_anim.sort_values('Day')
+    daily_anim['Cum_Profit_MW'] = daily_anim.groupby('MA', observed=True)['Profit_per_MW_day'].cumsum()
+    daily_anim['MA'] = daily_anim['MA'].astype(str)
+    daily_anim['Day_str'] = daily_anim['Day'].dt.strftime('%Y-%m-%d')
+
+    # Para cada día, tomar el top 12
+    frames_list = []
+    for day_val in sorted(daily_anim['Day_str'].unique()):
+        snapshot = daily_anim[daily_anim['Day_str'] == day_val].nlargest(12, 'Cum_Profit_MW')
+        snapshot = snapshot.sort_values('Cum_Profit_MW', ascending=True)
+        frames_list.append(snapshot)
+
+    if frames_list:
+        color_anim = '#f59e0b' if tech_anim == 'Solar PV' else '#34d399'
+        r_a, g_a, b_a = px.colors.hex_to_rgb(color_anim)
+
+        fig_anim = go.Figure(
+            data=[go.Bar(
+                x=frames_list[0]['Cum_Profit_MW'],
+                y=frames_list[0]['MA'],
+                orientation='h',
+                marker_color=color_anim,
+                text=[f"{v:,.0f} €/MW" for v in frames_list[0]['Cum_Profit_MW']],
+                textposition='outside',
+            )],
+            layout=go.Layout(
+                title=dict(
+                    text=f"<b>{tech_anim}</b> · " + t('Cumulative Profit/MW – ','Profit/MW Acumulado – ') + frames_list[0]['Day_str'].iloc[0],
+                    font=dict(size=13, color="#1e293b")),
+                xaxis=dict(title=t("Cumulative Profit/MW (€)","Profit/MW Acumulado (€)"),
+                           gridcolor="#e2e8f0", range=[0, daily_anim['Cum_Profit_MW'].max() * 1.15]),
+                yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+                paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
+                font=dict(family="Inter", color="#475569"),
+                title_font=dict(family="Inter", color="#1e293b", size=13),
+                margin=dict(l=10, r=100, t=55, b=10),
+                height=460,
+                showlegend=False,
+                updatemenus=[dict(
+                    type="buttons", showactive=False,
+                    y=1.12, x=0.0, xanchor="left",
+                    buttons=[
+                        dict(label=t("▶ Play","▶ Play"),
+                             method="animate",
+                             args=[None, dict(frame=dict(duration=300, redraw=True),
+                                              fromcurrent=True, transition=dict(duration=150))]),
+                        dict(label=t("⏸ Pause","⏸ Pausa"),
+                             method="animate",
+                             args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                                mode="immediate", transition=dict(duration=0))])
+                    ]
+                )],
+                sliders=[dict(
+                    steps=[dict(
+                        method="animate",
+                        args=[[f"frame_{i}"], dict(mode="immediate",
+                              frame=dict(duration=300, redraw=True),
+                              transition=dict(duration=150))],
+                        label=frames_list[i]['Day_str'].iloc[0] if not frames_list[i].empty else str(i)
+                    ) for i in range(len(frames_list))],
+                    transition=dict(duration=150),
+                    x=0, y=0, currentvalue=dict(
+                        font=dict(size=11, color="#475569"),
+                        prefix=t("Date: ","Fecha: "), visible=True, xanchor="center"),
+                    len=1.0
+                )]
+            ),
+            frames=[go.Frame(
+                data=[go.Bar(
+                    x=snap['Cum_Profit_MW'],
+                    y=snap['MA'],
+                    orientation='h',
+                    marker_color=[f"rgba({r_a},{g_a},{b_a},{0.4 + 0.6*(v/snap['Cum_Profit_MW'].max()) if snap['Cum_Profit_MW'].max()>0 else 0.7})"
+                                  for v in snap['Cum_Profit_MW']],
+                    text=[f"{v:,.0f} €/MW" for v in snap['Cum_Profit_MW']],
+                    textposition='outside',
+                )],
+                layout=go.Layout(
+                    title=dict(text=f"<b>{tech_anim}</b> · " + t('Cumulative Profit/MW – ','Profit/MW Acumulado – ') + snap['Day_str'].iloc[0])
+                ),
+                name=f"frame_{i}"
+            ) for i, snap in enumerate(frames_list)]
+        )
+        st.plotly_chart(fig_anim, use_container_width=True)
+        st.caption(t("Use the ▶ Play button or drag the slider to navigate through days.",
+                     "Usa el botón ▶ Play o arrastra el slider para navegar por los días."))
+
     gc.collect()
 
 # ==============================================================================
@@ -868,7 +1025,9 @@ elif seleccion_menu == name_verbund:
     section_header("💶", t("Verbund Profit (€)","Beneficio Verbund Servicios de Ajuste (€)"))
     try:
         INPUT_DATA = {
-            'FCTRAV2':['Calatrava',41.0,0.5],'EAYAMON':['Ayamonte',26.0,0.5],'EGST146':['Barroso',21.6,0.5],
+            'FCTRAV2':['Calatrava',41.0,0.5],'EAYAMON':['Ayamonte',26.0,0.5],
+            'UPAYM':['Ayamonte',26.0,0.5],
+            'EGST146':['Barroso',21.6,0.5],
             'PEVER':['Sorolla 1',182.3,0.6],'PEVER2':['Sorolla Mallén',29.8,0.6],
             'CLIFV30':['Pinos Puente 1',0.0,0.0],'CLIFV31':['Pinos Puente 2',0.0,0.0],'CLIFV32':['Pinos Puente 3',0.0,0.0],
             'UPBUS':['Buseco',0.0,0.0],'UPLMP':['Loma',0.0,0.0],'UPSLN':['La Solana',0.0,0.0],
@@ -885,11 +1044,18 @@ elif seleccion_menu == name_verbund:
         df_agg_v['Potencia MW'] = [val[1] for val in INPUT_DATA.values()]
         df_agg_v['Profit Verbund / MW'] = np.where(df_agg_v['Potencia MW']>0, df_agg_v['Profit Verbund']/df_agg_v['Potencia MW'], 0)
 
+        # ── Eliminar filas donde todos los valores numéricos de mercado son cero ──
+        profit_avail = [c for c in profit_cols_v if c in df_agg_v.columns]
+        mask_nonzero = df_agg_v[profit_avail].abs().sum(axis=1) > 0
+        df_agg_v = df_agg_v[mask_nonzero].copy()
+
         totales = df_agg_v.select_dtypes(include=[np.number]).sum()
         totales['UP'] = 'Total'
         totales['Profit Verbund / MW'] = totales['Profit Verbund']/totales['Potencia MW'] if totales['Potencia MW']>0 else 0
         df_final_v = pd.concat([df_agg_v, pd.DataFrame([totales])], ignore_index=True)
-        df_final_v.insert(1,'Installation',[val[0] for val in INPUT_DATA.values()]+['Total'])
+        # Installation column: map from INPUT_DATA, fallback to UP itself
+        df_final_v.insert(1,'Installation',
+            df_final_v['UP'].map({k: v[0] for k,v in INPUT_DATA.items()}).fillna(df_final_v['UP']))
 
         rename_dict = {
             'Profit_rt':'Profit RT F2','Profit_tr_s':'RT5','Profit_t':'Tertiary',
@@ -917,7 +1083,7 @@ elif seleccion_menu == name_verbund:
             df_final_v[cols_to_show].style
             .format({c:"{:,.2f} €" for c in num_cols})
             .background_gradient(subset=['Total Profit','Profit Verbund'], cmap='RdYlGn')
-            .apply(lambda row: ['font-weight:bold; background:#0d1424' if row['UP']=='Total' else '' for _ in row], axis=1),
+            .apply(lambda row: ['font-weight:bold; background:#f1f5f9' if row['UP']=='Total' else '' for _ in row], axis=1),
             use_container_width=True
         )
 
@@ -987,13 +1153,20 @@ elif seleccion_menu == name_evo:
             df_evo_m['Total_Profit_k'] = df_evo_m['Total_Profit'] / 1000
             df_evo_m['UP'] = df_evo_m['UP'].astype(str)
 
+            # €/MW mensual: join con potencia instalada
+            df_evo_m = pd.merge(df_evo_m, df_power, on='UP', how='left')
+            df_evo_m['Profit_per_MW'] = (
+                df_evo_m['Total_Profit'] / df_evo_m['Power MW'].replace(0, np.nan)
+            ).fillna(0)
+
             if len(ups_validas) > 20:
                 st.warning(t("Showing top 20 UPs by Total Profit.","⚠️ Mostrando solo el Top 20 de UPs."))
                 top_ups = df_evo_m.groupby('UP', observed=True)['Total_Profit'].sum().nlargest(20).index
                 df_evo_m = df_evo_m[df_evo_m['UP'].isin(top_ups)]
 
-            # 3 gráficos Plotly interactivos
-            c_evo1, c_evo2, c_evo3 = st.columns(3)
+            # 4 gráficos en 2x2
+            c_evo1, c_evo2 = st.columns(2)
+            c_evo3, c_evo4 = st.columns(2)
 
             def make_line(df, y_col, title, y_label, color_col='UP'):
                 fig = px.line(
@@ -1022,6 +1195,8 @@ elif seleccion_menu == name_evo:
                 st.plotly_chart(make_line(df_evo_m,'Total_Energy',t("Production (MWh)","Producción (MWh)"),"MWh"), use_container_width=True)
             with c_evo3:
                 st.plotly_chart(make_line(df_evo_m,'Total_Profit_k',t("Total Profit (k€)","Profit Total (k€)"),"k€"), use_container_width=True)
+            with c_evo4:
+                st.plotly_chart(make_line(df_evo_m,'Profit_per_MW',t("Profit (€/MW installed)","Profit (€/MW instalado)"),"€/MW"), use_container_width=True)
 
     except Exception as e:
         st.warning(f"{t('Error:','Error:')} {e}")
