@@ -1775,98 +1775,146 @@ elif seleccion_menu == name_portfolio:
     section_header("🗂️", t("MRA Portfolio – Current MW by Technology",
                              "Portfolio MRA – MW Actuales por Tecnología"))
     try:
-        # ── CARGA DE DATOS ────────────────────────────────────────────────────
-        # Función cacheada para leer el snapshot mensual subido
+        # ── TECHS EXCLUIDAS ───────────────────────────────────────────────────
+        EXCLUDED_TECHS = {
+            'Supply', 'Consumo de Servicios Auxiliares', 'Consumos directos en mercado',
+            'Unidad instrumental internacional', 'Importacion Francia', 'Porfolio',
+            '#N/A', 'Saldo acoplamiento mercado', 'Importacion Marruecos',
+            'Exportacion Francia', 'Exportacion Marruecos', 'Exportacion Andorra',
+            'Enlace Baleares', 'Genericas',
+        }
+
+        # ── FUNCIONES DE CARGA ────────────────────────────────────────────────
         @st.cache_data
-        def load_mra_snapshot(path):
+        def load_mra_snapshot(path_or_bytes, label=""):
             """Lee el export de UPs activas (snapshot mensual de REE/OMIE)."""
-            xl = pd.ExcelFile(path)
-            # Buscar la hoja con los datos de UPs
-            sheet = 'export_unidades-de-programacion' if 'export_unidades-de-programacion' in xl.sheet_names else xl.sheet_names[0]
-            raw = pd.read_excel(path, sheet_name=sheet, header=None)
-            # La fila de cabecera real está en la primera fila que tenga 'UP'
+            xl = pd.ExcelFile(path_or_bytes)
+            sheet = ('export_unidades-de-programacion'
+                     if 'export_unidades-de-programacion' in xl.sheet_names
+                     else xl.sheet_names[0])
+            raw = pd.read_excel(path_or_bytes, sheet_name=sheet, header=None)
+            # Detectar fila de cabecera: la que contenga 'UP'
             header_row = 0
             for i, row in raw.iterrows():
                 if 'UP' in row.values:
                     header_row = i
                     break
-            df = pd.read_excel(path, sheet_name=sheet, header=header_row)
-            df.columns = df.columns.astype(str)
-            # Normalizar nombres de columna clave
-            col_map = {}
-            for c in df.columns:
-                cl = c.strip()
-                if cl == 'UP':                        col_map[c] = 'UP'
-                elif cl == 'Power MW':                col_map[c] = 'Power MW'
-                elif cl == 'Tech':                    col_map[c] = 'Tech'
-                elif cl == 'Sujeto del Mercado 2':    col_map[c] = 'MA'
-                elif cl == 'Sujeto del Mercado':      col_map[c] = 'MA_Full'
-                elif cl == 'Technologia':             col_map[c] = 'Technologia'
-                elif cl == 'Buy-Sell':                col_map[c] = 'Buy_Sell'
-            df = df.rename(columns=col_map)
+            df = pd.read_excel(path_or_bytes, sheet_name=sheet, header=header_row)
+            df.columns = df.columns.astype(str).str.strip()
+            # Renombrar columnas clave
+            # MA = "Sujeto del Mercado" (nombre completo, no el código abreviado)
+            col_map = {
+                'UP':                    'UP',
+                'Power MW':              'Power MW',
+                'Tech':                  'Tech',
+                'Sujeto del Mercado':    'MA',       # ← nombre completo
+                'Sujeto del Mercado 2':  'MA_Code',  # código corto (GNRA, etc.)
+                'Technologia':           'Technologia',
+                'Buy-Sell':              'Buy_Sell',
+                'Descrip Long':          'Descrip Long',
+                'Regulation Zone':       'Regulation Zone',
+                'RZ':                    'RZ',
+            }
+            df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
             df['Power MW'] = pd.to_numeric(df.get('Power MW', 0), errors='coerce').fillna(0)
+            # Asegurar columnas mínimas
+            for col in ['MA','MA_Code','Tech','Buy_Sell']:
+                if col not in df.columns:
+                    df[col] = ''
+            df['MA']      = df['MA'].astype(str).str.strip()
+            df['MA_Code'] = df['MA_Code'].astype(str).str.strip()
+            df['Tech']    = df['Tech'].astype(str).str.strip()
             return df
 
         @st.cache_data
-        def load_evolution():
+        def load_evolution(path_or_bytes):
             """Lee el fichero histórico de portfolio por MA y fecha."""
-            path = 'Evolution_of_MRA_portfolio.xlsx'
-            if not os.path.exists(path):
-                return pd.DataFrame()
-            df = pd.read_excel(path, sheet_name='Sheet1', header=1)
-            df.columns = df.columns.astype(str)
-            # Convertir Day/Month/Year a fecha
-            df['Day']   = pd.to_numeric(df['Day'],   errors='coerce').fillna(1).astype(int)
-            df['Month'] = pd.to_numeric(df['Month'], errors='coerce').fillna(1).astype(int)
-            df['Year']  = pd.to_numeric(df['Year'],  errors='coerce').fillna(2024).astype(int)
+            df = pd.read_excel(path_or_bytes, sheet_name='Sheet1', header=1)
+            df.columns = df.columns.astype(str).str.strip()
+            df['Day']   = pd.to_numeric(df.get('Day',   1), errors='coerce').fillna(1).astype(int)
+            df['Month'] = pd.to_numeric(df.get('Month', 1), errors='coerce').fillna(1).astype(int)
+            df['Year']  = pd.to_numeric(df.get('Year',  2024), errors='coerce').fillna(2024).astype(int)
             df['Date']  = pd.to_datetime(dict(year=df['Year'], month=df['Month'], day=df['Day']),
                                          errors='coerce')
-            # Columnas de tecnología disponibles
             tech_cols = [c for c in ['Biomass + Cogen','CCGT + Coal','Hydro','Hydro Pump',
                                      'Solar Thermal','Solar PV','Wind','Others','TOTAL']
                          if c in df.columns]
             for c in tech_cols:
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+            df['MRA'] = df['MRA'].astype(str).str.strip()
             return df[['Date','MRA'] + tech_cols].dropna(subset=['Date','MRA'])
 
-        # ── UPLOAD DE SNAPSHOT ────────────────────────────────────────────────
-        st.markdown(f"""
-        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:1rem;">
-            <b style="color:#1e40af;">📁 {t('Monthly Snapshot','Snapshot Mensual')}</b><br>
-            <span style="color:#475569;font-size:0.85rem;">
-            {t('Upload the monthly export file from REE/OMIE (ANALISIS_MRAexport_unidades-de-programacion_YYYY-MM-DD.xlsx). '
-               'It reflects the active portfolio for that specific month.',
-               'Sube el fichero de exportación mensual de REE/OMIE (ANALISIS_MRAexport_unidades-de-programacion_YYYY-MM-DD.xlsx). '
-               'Refleja el portfolio activo de ese mes concreto.')}
-            </span>
-        </div>""", unsafe_allow_html=True)
+        @st.cache_data
+        def find_local_snapshot():
+            """Busca en disco el fichero ANALISIS MRAexport... más reciente."""
+            candidates = sorted(glob.glob('ANALISIS_MRAexport_unidades-de-programacion*.xlsx'), reverse=True)
+            return candidates[0] if candidates else None
 
-        uploaded_snapshot = st.file_uploader(
-            t("Upload monthly snapshot (.xlsx)","Subir snapshot mensual (.xlsx)"),
-            type=['xlsx'], key='portfolio_upload'
-        )
+        # ── PANEL DE CARGA ────────────────────────────────────────────────────
+        with st.expander(t("📁 File sources (click to change)",
+                           "📁 Fuentes de ficheros (clic para cambiar)"), expanded=False):
+            st.markdown(f"""
+            <div style="color:#475569;font-size:0.84rem;margin-bottom:0.8rem;">
+            {t('Both files are loaded automatically from the repository if present. '
+               'Upload here only if you want to use a different version.',
+               'Ambos ficheros se cargan automáticamente desde el repositorio si existen. '
+               'Sube aquí solo si quieres usar una versión diferente.')}
+            </div>""", unsafe_allow_html=True)
+            col_u1, col_u2 = st.columns(2)
+            with col_u1:
+                st.caption(t("Monthly snapshot (ANALISIS_MRAexport…)",
+                             "Snapshot mensual (ANALISIS_MRAexport…)"))
+                uploaded_snap = st.file_uploader(
+                    t("Override snapshot","Reemplazar snapshot"),
+                    type=['xlsx'], key='portfolio_snap_upload', label_visibility='collapsed')
+            with col_u2:
+                st.caption(t("Portfolio evolution (Evolution_of_MRA_portfolio.xlsx)",
+                             "Evolución portfolio (Evolution_of_MRA_portfolio.xlsx)"))
+                uploaded_evo = st.file_uploader(
+                    t("Override evolution file","Reemplazar fichero evolución"),
+                    type=['xlsx'], key='portfolio_evo_upload', label_visibility='collapsed')
 
-        # Intentar cargar desde disco si existe (para desarrollo local)
-        snapshot_path_default = 'ANALISIS_MRAexport_unidades-de-programacion_2025-12-09_16_05.xlsx'
+        # ── RESOLUCIÓN DE FUENTES ─────────────────────────────────────────────
+        # Snapshot
         df_snap = pd.DataFrame()
         snapshot_label = ""
+        if uploaded_snap is not None:
+            df_snap = load_mra_snapshot(uploaded_snap, label=uploaded_snap.name)
+            snapshot_label = uploaded_snap.name
+        else:
+            local_snap = find_local_snapshot()
+            if local_snap:
+                df_snap = load_mra_snapshot(local_snap)
+                snapshot_label = local_snap
 
-        if uploaded_snapshot is not None:
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-                tmp.write(uploaded_snapshot.read())
-                tmp_path = tmp.name
-            df_snap = load_mra_snapshot(tmp_path)
-            snapshot_label = uploaded_snapshot.name
-        elif os.path.exists(snapshot_path_default):
-            df_snap = load_mra_snapshot(snapshot_path_default)
-            snapshot_label = snapshot_path_default
+        # Evolution
+        df_evo = pd.DataFrame()
+        evo_label = ""
+        if uploaded_evo is not None:
+            df_evo = load_evolution(uploaded_evo)
+            evo_label = uploaded_evo.name
+        else:
+            evo_default = 'Evolution_of_MRA_portfolio.xlsx'
+            if os.path.exists(evo_default):
+                df_evo = load_evolution(evo_default)
+                evo_label = evo_default
 
-        df_evo = load_evolution()
+        # ── STATUS BAR ────────────────────────────────────────────────────────
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            if not df_snap.empty:
+                st.success(f"✅ Snapshot: **{snapshot_label}** — {len(df_snap):,} UPs")
+            else:
+                st.warning(t("⚠️ No snapshot loaded. Add ANALISIS_MRAexport_unidades-de-programacion*.xlsx to the repo.",
+                             "⚠️ Sin snapshot. Añade ANALISIS_MRAexport_unidades-de-programacion*.xlsx al repositorio."))
+        with sc2:
+            if not df_evo.empty:
+                st.success(f"✅ Evolution: **{evo_label}** — {df_evo['MRA'].nunique()} MAs")
+            else:
+                st.warning(t("⚠️ Evolution_of_MRA_portfolio.xlsx not found in repo.",
+                             "⚠️ Evolution_of_MRA_portfolio.xlsx no encontrado en el repositorio."))
 
         if df_snap.empty and df_evo.empty:
-            st.info(t("Upload a monthly snapshot to see the portfolio analysis.",
-                      "Sube un snapshot mensual para ver el análisis de portfolio."))
             st.stop()
 
         # ── TABS ──────────────────────────────────────────────────────────────
@@ -1876,25 +1924,24 @@ elif seleccion_menu == name_portfolio:
             t("🔍 MA Detail","🔍 Detalle por MA"),
         ])
 
-        # ── TECHS relevantes para generación ──────────────────────────────────
+        # ── CONSTANTES ────────────────────────────────────────────────────────
         RENEWABLES = ['Solar PV','Wind','Hydro','Biomass','Other renewables','Solar Thermal',
                       'Hydro Pump-Turb','Hydro Pump-Pump']
-        THERMAL    = ['CCGT','Coal','Cogeneration','Natural gas','Fuel','Nuclear']
         TECH_COLORS = {
-            'Solar PV':      '#f59e0b',
-            'Wind':          '#34d399',
-            'Hydro':         '#38bdf8',
-            'Biomass':       '#84cc16',
-            'CCGT':          '#6366f1',
-            'Coal':          '#78716c',
-            'Cogeneration':  '#fb923c',
-            'Natural gas':   '#a78bfa',
+            'Solar PV':         '#f59e0b',
+            'Wind':             '#34d399',
+            'Hydro':            '#38bdf8',
+            'Biomass':          '#84cc16',
+            'CCGT':             '#6366f1',
+            'Coal':             '#78716c',
+            'Cogeneration':     '#fb923c',
+            'Natural gas':      '#a78bfa',
             'Other renewables': '#10b981',
-            'Solar Thermal': '#fde68a',
-            'Nuclear':       '#f87171',
-            'Hydro Pump-Turb':'#7dd3fc',
-            'Storage':       '#c084fc',
-            'Fuel':          '#d97706',
+            'Solar Thermal':    '#fde68a',
+            'Nuclear':          '#f87171',
+            'Hydro Pump-Turb':  '#7dd3fc',
+            'Storage':          '#c084fc',
+            'Fuel':             '#d97706',
         }
 
         # ────────────────────────────────────────────────────────────────────
@@ -1907,18 +1954,14 @@ elif seleccion_menu == name_portfolio:
                 if snapshot_label:
                     st.caption(f"📂 {snapshot_label}")
 
-                # Filtrar solo generación (excluir Supply/compra y auxiliares)
-                gen_techs = [tc for tc in df_snap['Tech'].dropna().unique()
-                             if tc not in ['Supply','Consumo de Servicios Auxiliares',
-                                           'Consumos directos en mercado',
-                                           'Unidad instrumental internacional',
-                                           'Saldo acoplamiento mercado','Genericas',
-                                           'Enlace Baleares','Porfolio','Exportacion Francia',
-                                           'Importacion Francia','Exportacion Marruecos',
-                                           'Importacion Marruecos','Exportacion Andorra']]
-
-                df_gen = df_snap[df_snap['Tech'].isin(gen_techs) & (df_snap['Buy_Sell'] == 'Venta')].copy()
+                # Filtrar generación: excluir techs no deseadas y filas de compra
+                df_gen = df_snap[
+                    (~df_snap['Tech'].isin(EXCLUDED_TECHS)) &
+                    (~df_snap['Tech'].str.upper().isin({'NAN','#N/A',''})) &
+                    (df_snap['Buy_Sell'] == 'Venta')
+                ].copy()
                 df_gen['Power MW'] = pd.to_numeric(df_gen['Power MW'], errors='coerce').fillna(0)
+                df_gen = df_gen[df_gen['Power MW'] > 0]
 
                 # Agrupar por MA y tecnología
                 ma_tech = df_gen.groupby(['MA','Tech'], observed=True)['Power MW'].sum().reset_index()
@@ -2124,16 +2167,23 @@ elif seleccion_menu == name_portfolio:
                 st.info(t("Load a snapshot to see MA detail.","Carga un snapshot para ver el detalle por MA."))
             else:
                 all_mas_snap = sorted(df_snap['MA'].dropna().astype(str).unique().tolist())
+                # Default: GNERA or similar full name
+                default_ma = next((m for m in all_mas_snap if 'GNERA' in m.upper() or 'GESTERNOVA' in m.upper()), all_mas_snap[0])
                 sel_ma_detail = st.selectbox(
                     t("Select Market Agent:","Selecciona Representante:"),
                     options=all_mas_snap,
-                    index=all_mas_snap.index('GNRA') if 'GNRA' in all_mas_snap else 0,
+                    index=all_mas_snap.index(default_ma),
                     key='portfolio_ma_detail'
                 )
 
                 df_ma = df_snap[df_snap['MA'].astype(str) == sel_ma_detail].copy()
-                df_ma_gen = df_ma[df_ma['Buy_Sell'] == 'Venta'].copy()
+                df_ma_gen = df_ma[
+                    (df_ma['Buy_Sell'] == 'Venta') &
+                    (~df_ma['Tech'].isin(EXCLUDED_TECHS)) &
+                    (~df_ma['Tech'].str.upper().isin({'NAN','#N/A',''}))
+                ].copy()
                 df_ma_gen['Power MW'] = pd.to_numeric(df_ma_gen['Power MW'], errors='coerce').fillna(0)
+                df_ma_gen = df_ma_gen[df_ma_gen['Power MW'] > 0]
 
                 total_mw_ma = df_ma_gen['Power MW'].sum()
                 n_ups = len(df_ma_gen)
@@ -2218,11 +2268,15 @@ elif seleccion_menu == name_portfolio:
                 )
 
                 # Comparativa con evolución (si existe)
-                if not df_evo.empty and sel_ma_detail in df_evo['MRA'].values:
+                # Buscar el código corto (MA_Code) del MA seleccionado para cruzar con evolución
+                ma_code_match = df_snap.loc[df_snap['MA'] == sel_ma_detail, 'MA_Code'].dropna()
+                evo_ma_key = ma_code_match.iloc[0] if not ma_code_match.empty else sel_ma_detail
+                evo_match = df_evo[df_evo['MRA'].str.upper() == evo_ma_key.upper()]
+                if not df_evo.empty and not evo_match.empty:
                     st.markdown("---")
                     section_header("📈", t("Historical Evolution of this MA",
                                             "Evolución Histórica de este Representante"))
-                    df_evo_ma = df_evo[df_evo['MRA'] == sel_ma_detail].sort_values('Date')
+                    df_evo_ma = evo_match.sort_values('Date')
                     evo_plot_cols = [c for c in ['Solar PV','Wind','Hydro','CCGT + Coal',
                                                   'Biomass + Cogen','TOTAL'] if c in df_evo_ma.columns]
                     df_evo_ma_melt = df_evo_ma[['Date'] + evo_plot_cols].melt(
