@@ -457,12 +457,16 @@ if seleccion_menu == name_main:
                     if k in allh_main.columns and (include_rt5 or k != 'Profit_tr_s')}
 
     # Controles de la matriz
-    mc1, mc2, mc3, mc4 = st.columns([1.2, 1, 1, 1.5])
+    mc1, mc2, mc3, mc4 = st.columns([1.6, 1, 1, 1.5])
     with mc1:
         mat_metric = st.radio(
             t("Metric","Métrica"),
-            options=['eur_mw', 'eur'],
-            format_func=lambda x: t("€/MW·month","€/MW·mes") if x=='eur_mw' else "€ total",
+            options=['eur_mw', 'eur_k', 'eur_mwh'],
+            format_func=lambda x: {
+                'eur_mw':  t("€/MW·month","€/MW·mes"),
+                'eur_k':   t("k€ total","k€ total"),
+                'eur_mwh': t("€/MWh","€/MWh"),
+            }[x],
             horizontal=True, key='mat_metric'
         )
     with mc2:
@@ -503,62 +507,85 @@ if seleccion_menu == name_main:
             df_m = df_m[df_m['UP'].isin(mat_up_sel)]
 
         if df_m.empty:
-            return pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), ""
 
-        # Agregado por MA y UP (para poder filtrar por UP)
-        if mat_up_filter and mat_up_sel:
-            grp_col = 'UP'
-        else:
-            grp_col = 'MA'
-
+        grp_col = 'UP' if (mat_up_filter and mat_up_sel) else 'MA'
         agg_cols = list(MARKET_AVAIL.keys())
-        df_agg = df_m.groupby([grp_col], observed=True)[agg_cols].sum(numeric_only=True).reset_index()
-        df_agg.columns = [grp_col] + [MARKET_AVAIL[c] for c in agg_cols]
+
+        # Para €/MWh necesitamos también Energy_p48
+        extra_cols = ['Energy_p48'] if mat_metric == 'eur_mwh' else []
+        agg_src = [c for c in agg_cols + extra_cols if c in df_m.columns]
+        df_agg = df_m.groupby([grp_col], observed=True)[agg_src].sum(numeric_only=True).reset_index()
         df_agg[grp_col] = df_agg[grp_col].astype(str)
 
-        market_labels = list(MARKET_AVAIL.values())
+        market_labels = [MARKET_AVAIL[c] for c in agg_cols if c in df_agg.columns]
+        # Rename profit cols to display labels
+        rename_map = {c: MARKET_AVAIL[c] for c in agg_cols if c in df_agg.columns}
+        df_agg = df_agg.rename(columns=rename_map)
 
         if mat_metric == 'eur_mw':
-            # Unir potencia instalada
             if grp_col == 'UP':
-                df_agg = pd.merge(df_agg, df_power, left_on='UP', right_on='UP', how='left')
-                for col in market_labels:
-                    df_agg[col] = (df_agg[col] / (df_agg['Power MW'] * n_months)).replace([np.inf,-np.inf], 0).fillna(0)
-                df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
+                df_agg = pd.merge(df_agg, df_power, on='UP', how='left')
+                denom = (df_agg['Power MW'] * n_months).replace(0, np.nan)
             else:
-                # Para MA: sumar potencia de todas sus UPs
                 power_ma = pd.merge(
                     allh_main[allh_main['Tech'] == tech][['MA','UP']].drop_duplicates(),
                     df_power, on='UP', how='left'
                 ).groupby('MA', observed=True)['Power MW'].sum().reset_index()
                 df_agg = pd.merge(df_agg, power_ma, left_on='MA', right_on='MA', how='left')
-                for col in market_labels:
-                    df_agg[col] = (df_agg[col] / (df_agg['Power MW'] * n_months)).replace([np.inf,-np.inf], 0).fillna(0)
-                df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
+                denom = (df_agg['Power MW'] * n_months).replace(0, np.nan)
+            for col in market_labels:
+                df_agg[col] = (df_agg[col] / denom).fillna(0)
+            df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
             unit_label = "€/MW·mes"
+
+        elif mat_metric == 'eur_k':
+            for col in market_labels:
+                df_agg[col] = df_agg[col] / 1000
+            unit_label = "k€"
+
+        elif mat_metric == 'eur_mwh':
+            energy = df_agg.get('Energy_p48', pd.Series(np.nan, index=df_agg.index)).replace(0, np.nan)
+            for col in market_labels:
+                df_agg[col] = (df_agg[col] / energy).fillna(0)
+            df_agg = df_agg.drop(columns=['Energy_p48'], errors='ignore')
+            unit_label = "€/MWh"
+
         else:
             unit_label = "€"
 
-        # Total por fila para ordenar
         df_agg['_total'] = df_agg[market_labels].sum(axis=1)
         df_agg = df_agg.sort_values('_total', ascending=False).drop(columns='_total')
-        df_agg = df_agg.set_index(grp_col)
-
+        df_agg = df_agg.set_index(grp_col)[market_labels]
         return df_agg, unit_label
 
-    def render_matrix(tech, color_scale, title_color):
+    def render_matrix(tech, title_color):
         df_mat, unit_label = build_matrix(tech)
         if df_mat.empty:
             st.info(t(f"No data for {tech}.","Sin datos para {tech}."))
             return
 
-        section_header("📊", f"<span style='color:{title_color}'>{tech}</span> — {unit_label}")
+        # Título con color correcto (sin HTML dentro de section_header)
+        st.markdown(
+            f'<div class="section-header"><h3>📊 '
+            f'<span style="color:{title_color};font-weight:700;">{tech}</span>'
+            f' — {unit_label}</h3></div>',
+            unsafe_allow_html=True
+        )
 
         z = df_mat.values
-        fmt = ".0f" if unit_label == "€" else ".1f"
-        text_mat = [[f"{v:{fmt}}" for v in row] for row in z]
 
-        # Colorscale: rojo→blanco→verde centrado en 0
+        # Formato en celdas del heatmap según métrica
+        if unit_label == "k€":
+            text_mat = [[f"{v:,.1f}" for v in row] for row in z]
+            hover_fmt = ":,.1f"
+        elif unit_label in ("€/MW·mes", "€/MWh"):
+            text_mat = [[f"{v:,.1f}" for v in row] for row in z]
+            hover_fmt = ":,.2f"
+        else:
+            text_mat = [[f"{v:,.0f}" for v in row] for row in z]
+            hover_fmt = ":,.0f"
+
         colorscale = [
             [0.0,  "#b91c1c"],
             [0.35, "#fca5a5"],
@@ -576,7 +603,10 @@ if seleccion_menu == name_main:
             text=text_mat,
             texttemplate="<b>%{text}</b>",
             textfont=dict(size=11),
-            hovertemplate="<b>%{y}</b> · <b>%{x}</b><br>%{z:,.1f} " + unit_label + "<extra></extra>",
+            hovertemplate=(
+                "<b>%{y}</b> · <b>%{x}</b><br>"
+                f"%{{z{hover_fmt}}} {unit_label}<extra></extra>"
+            ),
             colorbar=dict(
                 title=dict(text=unit_label, font=dict(color="#475569", size=11)),
                 tickfont=dict(color="#475569", size=10),
@@ -584,7 +614,6 @@ if seleccion_menu == name_main:
             )
         ))
 
-        # Línea vertical entre mercados normales y secundaria si aplica
         sec_cols = [t('Sec. Band','Banda Sec.'), t('Sec. Energy','Energía Sec.')]
         if any(c in df_mat.columns for c in sec_cols):
             n_before = sum(1 for c in df_mat.columns if c not in sec_cols)
@@ -597,17 +626,25 @@ if seleccion_menu == name_main:
             paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
             font=dict(family="Inter", color="#475569"),
             title_font=dict(family="Inter", color="#1e293b", size=13),
-            margin=dict(l=10, r=60, t=20, b=60),
+            margin=dict(l=10, r=70, t=15, b=60),
             height=max(250, len(df_mat) * 34 + 100),
             xaxis=dict(side='bottom', tickangle=-20, tickfont=dict(size=11),
                        gridcolor="rgba(0,0,0,0)"),
             yaxis=dict(tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)", autorange='reversed'),
         )
+
+        # Gráfico PRIMERO, tabla debajo
         st.plotly_chart(fig, use_container_width=True)
 
-        # Tabla descargable debajo del heatmap
         with st.expander(t("📋 Show data table","📋 Ver tabla de datos"), expanded=False):
-            fmt_str = "{:,.0f} €" if unit_label == "€" else "{:,.1f} €/MW·mes"
+            if unit_label == "k€":
+                fmt_str = "{:,.1f} k€"
+            elif unit_label == "€/MW·mes":
+                fmt_str = "{:,.1f} €/MW·mes"
+            elif unit_label == "€/MWh":
+                fmt_str = "{:,.2f} €/MWh"
+            else:
+                fmt_str = "{:,.0f} €"
             st.dataframe(
                 df_mat.style
                 .format(fmt_str)
@@ -617,9 +654,9 @@ if seleccion_menu == name_main:
 
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        render_matrix('Solar PV', 'YlOrRd', '#d97706')
+        render_matrix('Solar PV', '#d97706')
     with col_m2:
-        render_matrix('Wind', 'Greens', '#059669')
+        render_matrix('Wind', '#059669')
 
     st.markdown("---")
 
