@@ -149,26 +149,93 @@ if cont_lang.button(t("🧹 Clear Cache & Reload", "🧹 Borrar Caché y Recarga
     st.rerun()
 
 # --- CONTRASEÑA ---
+import time as _time
+import hashlib as _hashlib
+
 def check_password():
+    # Si no hay secret configurado, acceso libre (entorno local)
     try:
-        app_pass = st.secrets["app_password"]
+        _correct = st.secrets["app_password"]
     except Exception:
         return True
-    def password_entered():
-        if st.session_state["password"] == st.secrets["app_password"]:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]
-        else:
-            st.session_state["password_correct"] = False
-    if "password_correct" not in st.session_state:
-        st.markdown(f"<h1 style='text-align:center;'>🔒 {t('Restricted Access','Acceso Restringido')}</h1>", unsafe_allow_html=True)
-        st.text_input(f"🔑 {t('Enter password:','Introduce la contraseña:')}", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.text_input(f"🔑 {t('Enter password:','Introduce la contraseña:')}", type="password", on_change=password_entered, key="password")
-        st.error(t("😕 Incorrect password.", "😕 Contraseña incorrecta."))
-        return False
-    return True
+
+    MAX_INTENTOS  = 5      # intentos antes de bloquear
+    BLOQUEO_SEG   = 300    # segundos de bloqueo (5 minutos)
+
+    # Inicializar estado
+    if "pw_intentos"  not in st.session_state: st.session_state["pw_intentos"]  = 0
+    if "pw_bloqueado" not in st.session_state: st.session_state["pw_bloqueado"] = 0.0
+    if "pw_ok"        not in st.session_state: st.session_state["pw_ok"]        = False
+
+    # Ya autenticado
+    if st.session_state["pw_ok"]:
+        return True
+
+    # Pantalla de login centrada
+    _, col, _ = st.columns([1, 1.4, 1])
+    with col:
+        st.markdown(f"""
+        <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;
+                    padding:2.5rem 2rem;margin-top:3rem;text-align:center;
+                    box-shadow:0 4px 20px rgba(0,0,0,0.07);">
+            <div style="font-size:2.8rem;margin-bottom:0.5rem;">🔒</div>
+            <h2 style="color:#1e293b;margin:0 0 0.3rem 0;font-size:1.4rem;">
+                {t('Restricted Access','Acceso Restringido')}</h2>
+            <p style="color:#64748b;font-size:0.85rem;margin:0 0 1.5rem 0;">
+                {t('Enter your password to continue.','Introduce tu contraseña para continuar.')}</p>
+        </div>""", unsafe_allow_html=True)
+
+        # Comprobar bloqueo
+        tiempo_restante = BLOQUEO_SEG - (_time.time() - st.session_state["pw_bloqueado"])
+        if st.session_state["pw_intentos"] >= MAX_INTENTOS and tiempo_restante > 0:
+            mins = int(tiempo_restante // 60)
+            segs = int(tiempo_restante % 60)
+            st.error(t(
+                f"🚫 Too many failed attempts. Try again in {mins}m {segs}s.",
+                f"🚫 Demasiados intentos fallidos. Inténtalo de nuevo en {mins}m {segs}s."
+            ))
+            st.info(t("Reload the page when the time is up.",
+                      "Recarga la página cuando el tiempo haya pasado."))
+            return False
+
+        # Si el bloqueo ha expirado, resetear intentos
+        if st.session_state["pw_intentos"] >= MAX_INTENTOS and tiempo_restante <= 0:
+            st.session_state["pw_intentos"]  = 0
+            st.session_state["pw_bloqueado"] = 0.0
+
+        def _on_submit():
+            pwd_input = st.session_state.get("pw_input", "")
+            # Comparar con hash para evitar timing attacks
+            h_input   = _hashlib.sha256(pwd_input.encode()).hexdigest()
+            h_correct = _hashlib.sha256(_correct.encode()).hexdigest()
+            if h_input == h_correct:
+                st.session_state["pw_ok"]       = True
+                st.session_state["pw_intentos"] = 0
+            else:
+                st.session_state["pw_intentos"] += 1
+                if st.session_state["pw_intentos"] >= MAX_INTENTOS:
+                    st.session_state["pw_bloqueado"] = _time.time()
+
+        st.text_input(
+            t("Password","Contraseña"),
+            type="password",
+            key="pw_input",
+            on_change=_on_submit,
+            placeholder=t("Enter password…","Introduce la contraseña…"),
+            label_visibility="collapsed"
+        )
+
+        # Mensajes de error / intentos restantes
+        if st.session_state["pw_intentos"] > 0 and not st.session_state["pw_ok"]:
+            restantes = MAX_INTENTOS - st.session_state["pw_intentos"]
+            if restantes > 0:
+                st.warning(t(
+                    f"😕 Incorrect password. {restantes} attempt(s) remaining.",
+                    f"😕 Contraseña incorrecta. Te quedan {restantes} intento(s)."
+                ))
+            # Si llega a 0 se mostrará el bloqueo en la siguiente recarga
+
+    return st.session_state["pw_ok"]
 
 if not check_password():
     st.stop()
