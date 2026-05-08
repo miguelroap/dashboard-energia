@@ -440,226 +440,6 @@ if seleccion_menu == name_main:
     grouped['is_Highlighted'] = grouped['UP'].isin(selected_ups)
     grouped['MA'] = grouped['MA'].astype(str)
 
-    # ── MATRIZ MA × MERCADO ───────────────────────────────────────────────────
-    st.markdown("---")
-    section_header("🗺️", t("Market Matrix – Profit by MA and Market",
-                             "Matriz de Mercados – Profit por Representante y Mercado"))
-
-    MARKET_COLS = {
-        'Profit_rt':   t('RRTT F2','RRTT F2'),
-        'Profit_tr_s': t('RT5','RT5'),
-        'Profit_t':    t('Tertiary','Terciaria'),
-        'Profit_rr':   t('RR','RR'),
-        'Profit_b':    t('Sec. Band','Banda Sec.'),
-        'Profit_se':   t('Sec. Energy','Energía Sec.'),
-    }
-    MARKET_AVAIL = {k: v for k, v in MARKET_COLS.items()
-                    if k in allh_main.columns and (include_rt5 or k != 'Profit_tr_s')}
-
-    # Controles de la matriz
-    mc1, mc2, mc3, mc4 = st.columns([1.6, 1, 1, 1.5])
-    with mc1:
-        mat_metric = st.radio(
-            t("Metric","Métrica"),
-            options=['eur_mw', 'eur_k', 'eur_mwh'],
-            format_func=lambda x: {
-                'eur_mw':  t("€/MW·month","€/MW·mes"),
-                'eur_k':   t("k€ total","k€ total"),
-                'eur_mwh': t("€/MWh","€/MWh"),
-            }[x],
-            horizontal=True, key='mat_metric'
-        )
-    with mc2:
-        mat_qualified = st.checkbox(
-            t("Only qualified in SSAA","Solo qualificadas SSAA"),
-            value=True, key='mat_qualified'
-        )
-    with mc3:
-        mat_up_filter = st.checkbox(
-            t("Filter by UP","Filtrar por UP"),
-            value=False, key='mat_up_filter'
-        )
-    with mc4:
-        if mat_up_filter:
-            all_ups_main = sorted(allh_main['UP'].unique().tolist())
-            mat_up_sel = st.multiselect(
-                t("UPs to include","UPs a incluir"),
-                options=all_ups_main,
-                default=all_ups_main[:5],
-                key='mat_up_sel',
-                label_visibility='collapsed'
-            )
-        else:
-            mat_up_sel = None
-
-    # Calcular n_meses para normalizar €/MW·mes
-    n_months = max(1, round((end_date - start_date).days / 30.44))
-
-    def build_matrix(tech):
-        df_m = allh_main[allh_main['Tech'] == tech].copy()
-
-        if mat_qualified:
-            mask_q = (df_m['Profit_rt'] != 0) | (df_m['Profit_b'] != 0) | (df_m['Profit_t'] != 0)
-            valid_ups_q = df_m.loc[mask_q, 'UP'].unique()
-            df_m = df_m[df_m['UP'].isin(valid_ups_q)]
-
-        if mat_up_filter and mat_up_sel:
-            df_m = df_m[df_m['UP'].isin(mat_up_sel)]
-
-        if df_m.empty:
-            return pd.DataFrame(), ""
-
-        grp_col = 'UP' if (mat_up_filter and mat_up_sel) else 'MA'
-        agg_cols = list(MARKET_AVAIL.keys())
-
-        # Para €/MWh necesitamos también Energy_p48
-        extra_cols = ['Energy_p48'] if mat_metric == 'eur_mwh' else []
-        agg_src = [c for c in agg_cols + extra_cols if c in df_m.columns]
-        df_agg = df_m.groupby([grp_col], observed=True)[agg_src].sum(numeric_only=True).reset_index()
-        df_agg[grp_col] = df_agg[grp_col].astype(str)
-
-        market_labels = [MARKET_AVAIL[c] for c in agg_cols if c in df_agg.columns]
-        # Rename profit cols to display labels
-        rename_map = {c: MARKET_AVAIL[c] for c in agg_cols if c in df_agg.columns}
-        df_agg = df_agg.rename(columns=rename_map)
-
-        if mat_metric == 'eur_mw':
-            if grp_col == 'UP':
-                df_agg = pd.merge(df_agg, df_power, on='UP', how='left')
-                denom = (df_agg['Power MW'] * n_months).replace(0, np.nan)
-            else:
-                power_ma = pd.merge(
-                    allh_main[allh_main['Tech'] == tech][['MA','UP']].drop_duplicates(),
-                    df_power, on='UP', how='left'
-                ).groupby('MA', observed=True)['Power MW'].sum().reset_index()
-                df_agg = pd.merge(df_agg, power_ma, left_on='MA', right_on='MA', how='left')
-                denom = (df_agg['Power MW'] * n_months).replace(0, np.nan)
-            for col in market_labels:
-                df_agg[col] = (df_agg[col] / denom).fillna(0)
-            df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
-            unit_label = "€/MW·mes"
-
-        elif mat_metric == 'eur_k':
-            for col in market_labels:
-                df_agg[col] = df_agg[col] / 1000
-            unit_label = "k€"
-
-        elif mat_metric == 'eur_mwh':
-            energy = df_agg.get('Energy_p48', pd.Series(np.nan, index=df_agg.index)).replace(0, np.nan)
-            for col in market_labels:
-                df_agg[col] = (df_agg[col] / energy).fillna(0)
-            df_agg = df_agg.drop(columns=['Energy_p48'], errors='ignore')
-            unit_label = "€/MWh"
-
-        else:
-            unit_label = "€"
-
-        df_agg['_total'] = df_agg[market_labels].sum(axis=1)
-        df_agg = df_agg.sort_values('_total', ascending=False).drop(columns='_total')
-        df_agg = df_agg.set_index(grp_col)[market_labels]
-        return df_agg, unit_label
-
-    def render_matrix(tech, title_color):
-        df_mat, unit_label = build_matrix(tech)
-        if df_mat.empty:
-            st.info(t(f"No data for {tech}.","Sin datos para {tech}."))
-            return
-
-        # Título con color correcto (sin HTML dentro de section_header)
-        st.markdown(
-            f'<div class="section-header"><h3>📊 '
-            f'<span style="color:{title_color};font-weight:700;">{tech}</span>'
-            f' — {unit_label}</h3></div>',
-            unsafe_allow_html=True
-        )
-
-        z = df_mat.values
-
-        # Formato en celdas del heatmap según métrica
-        if unit_label == "k€":
-            text_mat = [[f"{v:,.1f}" for v in row] for row in z]
-            hover_fmt = ":,.1f"
-        elif unit_label in ("€/MW·mes", "€/MWh"):
-            text_mat = [[f"{v:,.1f}" for v in row] for row in z]
-            hover_fmt = ":,.2f"
-        else:
-            text_mat = [[f"{v:,.0f}" for v in row] for row in z]
-            hover_fmt = ":,.0f"
-
-        colorscale = [
-            [0.0,  "#b91c1c"],
-            [0.35, "#fca5a5"],
-            [0.5,  "#f8fafc"],
-            [0.65, "#86efac"],
-            [1.0,  "#15803d"],
-        ]
-
-        fig = go.Figure(go.Heatmap(
-            z=z,
-            x=df_mat.columns.tolist(),
-            y=df_mat.index.tolist(),
-            colorscale=colorscale,
-            zmid=0,
-            text=text_mat,
-            texttemplate="<b>%{text}</b>",
-            textfont=dict(size=11),
-            hovertemplate=(
-                "<b>%{y}</b> · <b>%{x}</b><br>"
-                f"%{{z{hover_fmt}}} {unit_label}<extra></extra>"
-            ),
-            colorbar=dict(
-                title=dict(text=unit_label, font=dict(color="#475569", size=11)),
-                tickfont=dict(color="#475569", size=10),
-                thickness=12, outlinewidth=0,
-            )
-        ))
-
-        sec_cols = [t('Sec. Band','Banda Sec.'), t('Sec. Energy','Energía Sec.')]
-        if any(c in df_mat.columns for c in sec_cols):
-            n_before = sum(1 for c in df_mat.columns if c not in sec_cols)
-            if 0 < n_before < len(df_mat.columns):
-                fig.add_shape(type="line", xref="x", yref="paper",
-                              x0=n_before - 0.5, x1=n_before - 0.5, y0=0, y1=1,
-                              line=dict(color="#94a3b8", width=1.5, dash="dot"))
-
-        fig.update_layout(
-            paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-            font=dict(family="Inter", color="#475569"),
-            title_font=dict(family="Inter", color="#1e293b", size=13),
-            margin=dict(l=10, r=70, t=15, b=60),
-            height=max(250, len(df_mat) * 34 + 100),
-            xaxis=dict(side='bottom', tickangle=-20, tickfont=dict(size=11),
-                       gridcolor="rgba(0,0,0,0)"),
-            yaxis=dict(tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)", autorange='reversed'),
-        )
-
-        # Gráfico PRIMERO, tabla debajo
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander(t("📋 Show data table","📋 Ver tabla de datos"), expanded=False):
-            if unit_label == "k€":
-                fmt_str = "{:,.1f} k€"
-            elif unit_label == "€/MW·mes":
-                fmt_str = "{:,.1f} €/MW·mes"
-            elif unit_label == "€/MWh":
-                fmt_str = "{:,.2f} €/MWh"
-            else:
-                fmt_str = "{:,.0f} €"
-            st.dataframe(
-                df_mat.style
-                .format(fmt_str)
-                .background_gradient(cmap='RdYlGn', axis=None),
-                use_container_width=True
-            )
-
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        render_matrix('Solar PV', '#d97706')
-    with col_m2:
-        render_matrix('Wind', '#059669')
-
-    st.markdown("---")
-
     def make_boxplot(tech, color_main, color_highlight):
         data = grouped[grouped['Tech'] == tech].copy()
         if data.empty:
@@ -715,6 +495,161 @@ if seleccion_menu == name_main:
     with c2:
         fig_wind = make_boxplot('Wind', '#34d399', '#f87171')
         if fig_wind: st.plotly_chart(fig_wind, use_container_width=True)
+
+    # ── MATRIZ MA × MERCADO ───────────────────────────────────────────────────
+    st.markdown("---")
+    section_header("🗺️", t("Market Matrix – Profit by MA and Market",
+                             "Matriz de Mercados – Profit por Representante y Mercado"))
+
+    MARKET_COLS = {
+        'Profit_rt':   t('RRTT F2','RRTT F2'),
+        'Profit_tr_s': t('RT5','RT5'),
+        'Profit_t':    t('Tertiary','Terciaria'),
+        'Profit_rr':   t('RR','RR'),
+        'Profit_b':    t('Sec. Band','Banda Sec.'),
+        'Profit_se':   t('Sec. Energy','Energía Sec.'),
+    }
+    MARKET_AVAIL = {k: v for k, v in MARKET_COLS.items()
+                    if k in allh_main.columns and (include_rt5 or k != 'Profit_tr_s')}
+
+    mc1, mc2, mc3, mc4 = st.columns([1.6, 1, 1, 1.5])
+    with mc1:
+        mat_metric = st.radio(
+            t("Metric","Métrica"),
+            options=['eur_mw', 'eur_k', 'eur_mwh'],
+            format_func=lambda x: {
+                'eur_mw':  t("€/MW·month","€/MW·mes"),
+                'eur_k':   t("k€ total","k€ total"),
+                'eur_mwh': t("€/MWh","€/MWh"),
+            }[x],
+            horizontal=True, key='mat_metric'
+        )
+    with mc2:
+        mat_qualified = st.checkbox(
+            t("Only qualified in SSAA","Solo qualificadas SSAA"),
+            value=True, key='mat_qualified'
+        )
+    with mc3:
+        mat_up_filter = st.checkbox(
+            t("Filter by UP","Filtrar por UP"),
+            value=False, key='mat_up_filter'
+        )
+    with mc4:
+        if mat_up_filter:
+            all_ups_main = sorted(allh_main['UP'].unique().tolist())
+            mat_up_sel = st.multiselect(
+                t("UPs to include","UPs a incluir"),
+                options=all_ups_main,
+                default=all_ups_main[:5],
+                key='mat_up_sel',
+                label_visibility='collapsed'
+            )
+        else:
+            mat_up_sel = None
+
+    n_months = max(1, round((end_date - start_date).days / 30.44))
+
+    def build_matrix(tech):
+        df_m = allh_main[allh_main['Tech'] == tech].copy()
+        if mat_qualified:
+            mask_q = (df_m['Profit_rt'] != 0) | (df_m['Profit_b'] != 0) | (df_m['Profit_t'] != 0)
+            df_m = df_m[df_m['UP'].isin(df_m.loc[mask_q, 'UP'].unique())]
+        if mat_up_filter and mat_up_sel:
+            df_m = df_m[df_m['UP'].isin(mat_up_sel)]
+        if df_m.empty:
+            return pd.DataFrame(), ""
+        grp_col = 'UP' if (mat_up_filter and mat_up_sel) else 'MA'
+        agg_cols = list(MARKET_AVAIL.keys())
+        extra_cols = ['Energy_p48'] if mat_metric == 'eur_mwh' else []
+        agg_src = [c for c in agg_cols + extra_cols if c in df_m.columns]
+        df_agg = df_m.groupby([grp_col], observed=True)[agg_src].sum(numeric_only=True).reset_index()
+        df_agg[grp_col] = df_agg[grp_col].astype(str)
+        market_labels = [MARKET_AVAIL[c] for c in agg_cols if c in df_agg.columns]
+        df_agg = df_agg.rename(columns={c: MARKET_AVAIL[c] for c in agg_cols if c in df_agg.columns})
+        if mat_metric == 'eur_mw':
+            if grp_col == 'UP':
+                df_agg = pd.merge(df_agg, df_power, on='UP', how='left')
+                denom = (df_agg['Power MW'] * n_months).replace(0, np.nan)
+            else:
+                power_ma = pd.merge(
+                    allh_main[allh_main['Tech'] == tech][['MA','UP']].drop_duplicates(),
+                    df_power, on='UP', how='left'
+                ).groupby('MA', observed=True)['Power MW'].sum().reset_index()
+                df_agg = pd.merge(df_agg, power_ma, left_on='MA', right_on='MA', how='left')
+                denom = (df_agg['Power MW'] * n_months).replace(0, np.nan)
+            for col in market_labels:
+                df_agg[col] = (df_agg[col] / denom).fillna(0)
+            df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
+            unit_label = "€/MW·mes"
+        elif mat_metric == 'eur_k':
+            for col in market_labels:
+                df_agg[col] = df_agg[col] / 1000
+            unit_label = "k€"
+        elif mat_metric == 'eur_mwh':
+            energy = df_agg.get('Energy_p48', pd.Series(np.nan, index=df_agg.index)).replace(0, np.nan)
+            for col in market_labels:
+                df_agg[col] = (df_agg[col] / energy).fillna(0)
+            df_agg = df_agg.drop(columns=['Energy_p48'], errors='ignore')
+            unit_label = "€/MWh"
+        else:
+            unit_label = "€"
+        df_agg['_total'] = df_agg[market_labels].sum(axis=1)
+        df_agg = df_agg.sort_values('_total', ascending=False).drop(columns='_total')
+        return df_agg.set_index(grp_col)[market_labels], unit_label
+
+    def render_matrix(tech, title_color):
+        df_mat, unit_label = build_matrix(tech)
+        if df_mat.empty:
+            st.info(t(f"No data for {tech}.", f"Sin datos para {tech}."))
+            return
+        st.markdown(
+            f'<div class="section-header"><h3>📊 '
+            f'<span style="color:{title_color};font-weight:700;">{tech}</span>'
+            f' — {unit_label}</h3></div>', unsafe_allow_html=True)
+        z = df_mat.values
+        if unit_label == "k€":
+            text_mat = [[f"{v:,.1f}" for v in row] for row in z]; hover_fmt = ":,.1f"
+        elif unit_label in ("€/MW·mes","€/MWh"):
+            text_mat = [[f"{v:,.1f}" for v in row] for row in z]; hover_fmt = ":,.2f"
+        else:
+            text_mat = [[f"{v:,.0f}" for v in row] for row in z]; hover_fmt = ":,.0f"
+        colorscale = [[0.0,"#b91c1c"],[0.35,"#fca5a5"],[0.5,"#f8fafc"],[0.65,"#86efac"],[1.0,"#15803d"]]
+        fig = go.Figure(go.Heatmap(
+            z=z, x=df_mat.columns.tolist(), y=df_mat.index.tolist(),
+            colorscale=colorscale, zmid=0, text=text_mat,
+            texttemplate="<b>%{text}</b>", textfont=dict(size=11),
+            hovertemplate=f"<b>%{{y}}</b> · <b>%{{x}}</b><br>%{{z{hover_fmt}}} {unit_label}<extra></extra>",
+            colorbar=dict(title=dict(text=unit_label, font=dict(color="#475569",size=11)),
+                          tickfont=dict(color="#475569",size=10), thickness=12, outlinewidth=0)
+        ))
+        sec_cols = [t('Sec. Band','Banda Sec.'), t('Sec. Energy','Energía Sec.')]
+        n_before = sum(1 for c in df_mat.columns if c not in sec_cols)
+        if any(c in df_mat.columns for c in sec_cols) and 0 < n_before < len(df_mat.columns):
+            fig.add_shape(type="line", xref="x", yref="paper",
+                          x0=n_before-0.5, x1=n_before-0.5, y0=0, y1=1,
+                          line=dict(color="#94a3b8", width=1.5, dash="dot"))
+        fig.update_layout(
+            paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+            font=dict(family="Inter", color="#475569"),
+            title_font=dict(family="Inter", color="#1e293b", size=13),
+            margin=dict(l=10,r=70,t=15,b=60),
+            height=max(250, len(df_mat)*34+100),
+            xaxis=dict(side='bottom', tickangle=-20, tickfont=dict(size=11), gridcolor="rgba(0,0,0,0)"),
+            yaxis=dict(tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)", autorange='reversed'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        with st.expander(t("📋 Show data table","📋 Ver tabla de datos"), expanded=False):
+            fmt_str = {"k€":"{:,.1f} k€","€/MW·mes":"{:,.1f} €/MW·mes",
+                       "€/MWh":"{:,.2f} €/MWh"}.get(unit_label,"{:,.0f} €")
+            st.dataframe(df_mat.style.format(fmt_str)
+                         .background_gradient(cmap='RdYlGn', axis=None),
+                         use_container_width=True)
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        render_matrix('Solar PV', '#d97706')
+    with col_m2:
+        render_matrix('Wind', '#059669')
 
     # ── RANKING: días como mejor MA por tecnología ────────────────────────────
     st.markdown("---")
