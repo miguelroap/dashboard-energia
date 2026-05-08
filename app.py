@@ -568,18 +568,21 @@ if seleccion_menu == name_main:
         fu1, fu2 = st.columns(2)
         with fu1:
             ups_solar_all, ups_solar_ma = _ups_for_tech('Solar PV')
+            # Si hay MAs seleccionados, las opciones se limitan a sus UPs
+            solar_options = ups_solar_ma if mat_ma_quick else ups_solar_all
             mat_up_sel_solar = st.multiselect(
                 t("☀️ Solar PV – UPs to include","☀️ Solar PV – UPs a incluir"),
-                options=ups_solar_all,
-                default=ups_solar_ma if ups_solar_ma else ups_solar_all[:5],
+                options=solar_options,
+                default=solar_options,
                 key='mat_up_sel_solar'
             )
         with fu2:
             ups_wind_all, ups_wind_ma = _ups_for_tech('Wind')
+            wind_options = ups_wind_ma if mat_ma_quick else ups_wind_all
             mat_up_sel_wind = st.multiselect(
                 t("🌬️ Wind – UPs to include","🌬️ Wind – UPs a incluir"),
-                options=ups_wind_all,
-                default=ups_wind_ma if ups_wind_ma else ups_wind_all[:5],
+                options=wind_options,
+                default=wind_options,
                 key='mat_up_sel_wind'
             )
 
