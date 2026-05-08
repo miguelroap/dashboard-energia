@@ -3,6 +3,8 @@ pandas
 numpy
 plotly
 pyarrow
-matplotlib
 openpyxl
+google-auth
+google-auth-httplib2
+google-api-python-client
 gcsfs

@@ -8,6 +8,10 @@ from plotly.subplots import make_subplots
 import glob
 import gc
 import os
+from gcs_loader import (
+    gcs_available, load_parquet, load_excel,
+    list_files, find_latest_excel, list_parquet_years
+)
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="⚡")
 
@@ -191,13 +195,21 @@ if st.session_state.last_mode != is_hourly:
     st.session_state.last_mode = is_hourly
 
 # --- CARGA DE DATOS ---
+_USE_GCS = gcs_available()
+
 @st.cache_data
 def load_daily_data_for_years(years):
     dfs = []
     for y in years:
-        archivo = f'allh_diario_{y}.parquet'
-        if os.path.exists(archivo):
-            dfs.append(pd.read_parquet(archivo))
+        filename = f'allh_diario_{y}.parquet'
+        if _USE_GCS:
+            df_y = load_parquet(filename)
+        elif os.path.exists(filename):
+            df_y = pd.read_parquet(filename)
+        else:
+            continue
+        if not df_y.empty:
+            dfs.append(df_y)
     if not dfs: return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
     for col in ['UP', 'MA', 'Tech']:
@@ -207,28 +219,49 @@ def load_daily_data_for_years(years):
 @st.cache_data
 def get_daily_date_bounds(min_y, max_y):
     try:
-        min_d = pd.read_parquet(f'allh_diario_{min_y}.parquet', columns=['Day'])['Day'].min().date()
-        max_d = pd.read_parquet(f'allh_diario_{max_y}.parquet', columns=['Day'])['Day'].max().date()
-        return min_d, max_d
+        if _USE_GCS:
+            df_min = load_parquet(f'allh_diario_{min_y}.parquet')
+            df_max = load_parquet(f'allh_diario_{max_y}.parquet')
+        else:
+            df_min = pd.read_parquet(f'allh_diario_{min_y}.parquet', columns=['Day'])
+            df_max = pd.read_parquet(f'allh_diario_{max_y}.parquet', columns=['Day'])
+        return df_min['Day'].min().date(), df_max['Day'].max().date()
     except:
         return pd.to_datetime('2023-01-01').date(), pd.to_datetime('today').date()
 
 @st.cache_data
 def load_power_data():
     try:
-        if os.path.exists('ups_dashboard.parquet'):
-            df = pd.read_parquet('ups_dashboard.parquet', columns=['UP', 'Power MW'])
-            df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce')
-            return df.dropna(subset=['Power MW', 'UP'])
-        return pd.DataFrame(columns=['UP', 'Power MW'])
+        if _USE_GCS:
+            df = load_parquet('ups_dashboard.parquet')
+        elif os.path.exists('ups_dashboard.parquet'):
+            df = pd.read_parquet('ups_dashboard.parquet')
+        else:
+            return pd.DataFrame(columns=['UP', 'Power MW'])
+        if 'Power MW' not in df.columns:
+            return pd.DataFrame(columns=['UP', 'Power MW'])
+        df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce')
+        return df[['UP', 'Power MW']].dropna()
     except:
         return pd.DataFrame(columns=['UP', 'Power MW'])
 
-diario_files = glob.glob('allh_diario_*.parquet')
-available_years = sorted([int(f.split('_')[-1].split('.')[0]) for f in diario_files if f.split('_')[-1].split('.')[0].isdigit()])
+# Detectar años disponibles
+if _USE_GCS:
+    available_years = list_parquet_years('allh_diario_')
+else:
+    diario_files = glob.glob('allh_diario_*.parquet')
+    available_years = sorted([
+        int(f.split('_')[-1].split('.')[0])
+        for f in diario_files
+        if f.split('_')[-1].split('.')[0].isdigit()
+    ])
 
 if not available_years:
-    st.error(t("Daily files not found.", "Archivos diarios no encontrados."))
+    if _USE_GCS:
+        st.error(t("No allh_diario_*.parquet files found in Google Cloud Storage.",
+                   "No se encontraron archivos allh_diario_*.parquet en Google Cloud Storage."))
+    else:
+        st.error(t("Daily files not found.", "Archivos diarios no encontrados."))
     st.stop()
 
 min_date_val, max_date_val = get_daily_date_bounds(available_years[0], available_years[-1])
@@ -1846,24 +1879,35 @@ elif seleccion_menu == name_portfolio:
 
         @st.cache_data
         def find_local_snapshot():
-            """Busca en disco el fichero ANALISIS MRAexport... más reciente."""
-            candidates = sorted(glob.glob('ANALISIS MRAexport_unidades-de-programacion*.xlsx'), reverse=True)
-            return candidates[0] if candidates else None
+            """Busca el fichero ANALISIS MRAexport... más reciente en GCS o en disco."""
+            if _USE_GCS:
+                matches = sorted(
+                    [f for f in list_files('ANALISIS MRAexport_unidades-de-programacion')
+                     if f.endswith('.xlsx')],
+                    reverse=True
+                )
+                return matches[0] if matches else None
+            else:
+                candidates = sorted(
+                    glob.glob('ANALISIS MRAexport_unidades-de-programacion*.xlsx'),
+                    reverse=True
+                )
+                return candidates[0] if candidates else None
 
         # ── PANEL DE CARGA ────────────────────────────────────────────────────
         with st.expander(t("📁 File sources (click to change)",
                            "📁 Fuentes de ficheros (clic para cambiar)"), expanded=False):
             st.markdown(f"""
             <div style="color:#475569;font-size:0.84rem;margin-bottom:0.8rem;">
-            {t('Both files are loaded automatically from the repository if present. '
-               'Upload here only if you want to use a different version.',
-               'Ambos ficheros se cargan automáticamente desde el repositorio si existen. '
+            {t('Both files are loaded automatically from GCS if configured, or from the repo otherwise. '
+               'Upload here only if you want to override.',
+               'Ambos ficheros se cargan automáticamente desde GCS si está configurado, o del repo en caso contrario. '
                'Sube aquí solo si quieres usar una versión diferente.')}
             </div>""", unsafe_allow_html=True)
             col_u1, col_u2 = st.columns(2)
             with col_u1:
-                st.caption(t("Monthly snapshot (ANALISIS_MRAexport…)",
-                             "Snapshot mensual (ANALISIS_MRAexport…)"))
+                st.caption(t("Monthly snapshot (ANALISIS MRAexport…)",
+                             "Snapshot mensual (ANALISIS MRAexport…)"))
                 uploaded_snap = st.file_uploader(
                     t("Override snapshot","Reemplazar snapshot"),
                     type=['xlsx'], key='portfolio_snap_upload', label_visibility='collapsed')
@@ -1882,22 +1926,51 @@ elif seleccion_menu == name_portfolio:
             df_snap = load_mra_snapshot(uploaded_snap, label=uploaded_snap.name)
             snapshot_label = uploaded_snap.name
         else:
-            local_snap = find_local_snapshot()
-            if local_snap:
-                df_snap = load_mra_snapshot(local_snap)
-                snapshot_label = local_snap
+            snap_name = find_local_snapshot()
+            if snap_name:
+                if _USE_GCS:
+                    raw_bytes = load_excel(snap_name, sheet_name=None)  # cargar como bytes via GCS
+                    # Necesitamos BytesIO — usamos gcsfs directamente
+                    import io as _io
+                    from gcs_loader import _get_fs, _path
+                    _fs = _get_fs()
+                    with _fs.open(_path(snap_name), "rb") as _f:
+                        _buf = _io.BytesIO(_f.read())
+                    df_snap = load_mra_snapshot(_buf, label=snap_name)
+                else:
+                    df_snap = load_mra_snapshot(snap_name, label=snap_name)
+                snapshot_label = snap_name
 
         # Evolution
         df_evo = pd.DataFrame()
         evo_label = ""
+        evo_filename = 'Evolution_of_MRA_portfolio.xlsx'
+
+        def _process_evo(df_raw):
+            """Normaliza el DataFrame de evolución independientemente del origen."""
+            if df_raw.empty: return df_raw
+            df_raw.columns = df_raw.columns.astype(str).str.strip()
+            for _col, _def in [('Day',1),('Month',1),('Year',2024)]:
+                df_raw[_col] = pd.to_numeric(df_raw.get(_col, _def), errors='coerce').fillna(_def).astype(int)
+            df_raw['Date'] = pd.to_datetime(
+                dict(year=df_raw['Year'], month=df_raw['Month'], day=df_raw['Day']), errors='coerce')
+            _tc = [c for c in ['Biomass + Cogen','CCGT + Coal','Hydro','Hydro Pump',
+                                'Solar Thermal','Solar PV','Wind','Others','TOTAL']
+                   if c in df_raw.columns]
+            for _c in _tc: df_raw[_c] = pd.to_numeric(df_raw[_c], errors='coerce').fillna(0)
+            df_raw['MRA'] = df_raw['MRA'].astype(str).str.strip()
+            return df_raw[['Date','MRA'] + _tc].dropna(subset=['Date','MRA'])
+
         if uploaded_evo is not None:
-            df_evo = load_evolution(uploaded_evo)
+            df_evo = _process_evo(pd.read_excel(uploaded_evo, sheet_name='Sheet1', header=1))
             evo_label = uploaded_evo.name
-        else:
-            evo_default = 'Evolution_of_MRA_portfolio.xlsx'
-            if os.path.exists(evo_default):
-                df_evo = load_evolution(evo_default)
-                evo_label = evo_default
+        elif _USE_GCS:
+            _raw_evo = load_excel(evo_filename, sheet_name='Sheet1', header=1)
+            df_evo = _process_evo(_raw_evo)
+            evo_label = evo_filename
+        elif os.path.exists(evo_filename):
+            df_evo = _process_evo(pd.read_excel(evo_filename, sheet_name='Sheet1', header=1))
+            evo_label = evo_filename
 
         # ── STATUS BAR ────────────────────────────────────────────────────────
         sc1, sc2 = st.columns(2)
