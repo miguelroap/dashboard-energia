@@ -536,16 +536,52 @@ if seleccion_menu == name_main:
         )
     with mc4:
         if mat_up_filter:
-            all_ups_main = sorted(allh_main['UP'].unique().tolist())
-            mat_up_sel = st.multiselect(
-                t("UPs to include","UPs a incluir"),
-                options=all_ups_main,
-                default=all_ups_main[:5],
-                key='mat_up_sel',
-                label_visibility='collapsed'
+            # Selector de MA para cargar sus UPs de una vez
+            all_mas_matrix = sorted(allh_main['MA'].astype(str).unique().tolist())
+            mat_ma_quick = st.multiselect(
+                t("Quick: all UPs of a MA","Rápido: todas las UPs de un MA"),
+                options=all_mas_matrix,
+                default=[],
+                key='mat_ma_quick',
+                label_visibility='visible'
             )
         else:
-            mat_up_sel = None
+            mat_ma_quick = []
+
+    # Si hay filtro por UP, mostrar selector de UPs debajo (full width), separado por tecnología
+    mat_up_sel_solar, mat_up_sel_wind = None, None
+    if mat_up_filter:
+        st.markdown("")
+        # UPs disponibles por tecnología (filtradas por MA seleccionados si los hay)
+        def _ups_for_tech(tech):
+            df_t = allh_main[allh_main['Tech'] == tech].copy()
+            if mat_qualified:
+                mask_q = (df_t['Profit_rt'] != 0) | (df_t['Profit_b'] != 0) | (df_t['Profit_t'] != 0)
+                df_t = df_t[df_t['UP'].isin(df_t.loc[mask_q, 'UP'].unique())]
+            ups_all = sorted(df_t['UP'].astype(str).unique().tolist())
+            # UPs de los MA seleccionados en el selector rápido
+            ups_from_ma = sorted(
+                df_t[df_t['MA'].astype(str).isin(mat_ma_quick)]['UP'].astype(str).unique().tolist()
+            ) if mat_ma_quick else []
+            return ups_all, ups_from_ma
+
+        fu1, fu2 = st.columns(2)
+        with fu1:
+            ups_solar_all, ups_solar_ma = _ups_for_tech('Solar PV')
+            mat_up_sel_solar = st.multiselect(
+                t("☀️ Solar PV – UPs to include","☀️ Solar PV – UPs a incluir"),
+                options=ups_solar_all,
+                default=ups_solar_ma if ups_solar_ma else ups_solar_all[:5],
+                key='mat_up_sel_solar'
+            )
+        with fu2:
+            ups_wind_all, ups_wind_ma = _ups_for_tech('Wind')
+            mat_up_sel_wind = st.multiselect(
+                t("🌬️ Wind – UPs to include","🌬️ Wind – UPs a incluir"),
+                options=ups_wind_all,
+                default=ups_wind_ma if ups_wind_ma else ups_wind_all[:5],
+                key='mat_up_sel_wind'
+            )
 
     n_months = max(1, round((end_date - start_date).days / 30.44))
 
@@ -554,11 +590,17 @@ if seleccion_menu == name_main:
         if mat_qualified:
             mask_q = (df_m['Profit_rt'] != 0) | (df_m['Profit_b'] != 0) | (df_m['Profit_t'] != 0)
             df_m = df_m[df_m['UP'].isin(df_m.loc[mask_q, 'UP'].unique())]
-        if mat_up_filter and mat_up_sel:
-            df_m = df_m[df_m['UP'].isin(mat_up_sel)]
+
+        # Selección de UPs específica por tecnología
+        if mat_up_filter:
+            up_sel = mat_up_sel_solar if tech == 'Solar PV' else mat_up_sel_wind
+            if up_sel:
+                df_m = df_m[df_m['UP'].astype(str).isin(up_sel)]
+
         if df_m.empty:
             return pd.DataFrame(), ""
-        grp_col = 'UP' if (mat_up_filter and mat_up_sel) else 'MA'
+
+        grp_col = 'UP' if mat_up_filter else 'MA'
         agg_cols = list(MARKET_AVAIL.keys())
         extra_cols = ['Energy_p48'] if mat_metric == 'eur_mwh' else []
         agg_src = [c for c in agg_cols + extra_cols if c in df_m.columns]
