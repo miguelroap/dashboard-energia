@@ -393,7 +393,7 @@ seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapse
 if seleccion_menu == name_main:
     section_header("📈", t("Ancillary Services Revenue Dispersion by Technology", "Dispersión de Ingresos en Servicios de Ajuste por Tecnología"))
 
-    col_f1, col_f2 = st.columns(2)
+    col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
     with col_f1:
         ups_interes = ['CLIFV30','CLIFV31','CLIFV32','UPBUS','UPLMP','UPSLN','GALPS59','GALPS57','GALPS56','FCTRAV2','EFGNRA','PEVER','PEVER2','EAYAMON','EGST146']
         installation = ['Pinos Puente 1','Pinos Puente 2','Pinos Puente 3','Buseco','Loma','La Solana','Buseco_Galp','Loma_Galp','La Solana_Galp','Calatrava','Bodenaya + Pico + Others','Sorolla 1','Mallen','Ayamonte','Barroso']
@@ -411,6 +411,11 @@ if seleccion_menu == name_main:
             format_func=lambda x: t("No Secondary","Sin Secundaria") if x=='no_sec' else (t("Only Secondary","Solo Secundaria") if x=='sec' else t("All Markets","Todos los mercados")),
             horizontal=True
         )
+    with col_f3:
+        include_rt5 = st.checkbox(
+            t("Include RT5","Incluir RT5"),
+            value=True, key='main_include_rt5'
+        )
 
     mask_active = (allh['Profit_rt'] != 0) | (allh['Profit_b'] != 0)
     active_ups = allh[mask_active]['UP'].unique()
@@ -421,6 +426,10 @@ if seleccion_menu == name_main:
     elif aass_sel == 'sec':  cols_sel = ['Profit_b','Profit_se']
     else:                    cols_sel = ['Profit_rt','Profit_tr_s','Profit_t','Profit_rr','Profit_b','Profit_se']
 
+    # Eliminar RT5 si el usuario lo desactiva
+    if not include_rt5:
+        cols_sel = [c for c in cols_sel if c != 'Profit_tr_s']
+
     allh_main = allh_main.assign(Total_Profit=allh_main[cols_sel].sum(axis=1), Month=allh_main['Day'].dt.to_period('M'))
     monthly = allh_main.groupby(['UP','Tech','MA','Month'], observed=True).agg(
         Monthly_Profit=('Total_Profit','sum'), Monthly_Energy=('Energy_p48','sum')
@@ -430,6 +439,189 @@ if seleccion_menu == name_main:
     grouped = monthly.groupby(['UP','Tech','MA'], observed=True).agg(Profit_per_MW=('Profit_per_MW','mean')).reset_index()
     grouped['is_Highlighted'] = grouped['UP'].isin(selected_ups)
     grouped['MA'] = grouped['MA'].astype(str)
+
+    # ── MATRIZ MA × MERCADO ───────────────────────────────────────────────────
+    st.markdown("---")
+    section_header("🗺️", t("Market Matrix – Profit by MA and Market",
+                             "Matriz de Mercados – Profit por Representante y Mercado"))
+
+    MARKET_COLS = {
+        'Profit_rt':   t('RRTT F2','RRTT F2'),
+        'Profit_tr_s': t('RT5','RT5'),
+        'Profit_t':    t('Tertiary','Terciaria'),
+        'Profit_rr':   t('RR','RR'),
+        'Profit_b':    t('Sec. Band','Banda Sec.'),
+        'Profit_se':   t('Sec. Energy','Energía Sec.'),
+    }
+    MARKET_AVAIL = {k: v for k, v in MARKET_COLS.items()
+                    if k in allh_main.columns and (include_rt5 or k != 'Profit_tr_s')}
+
+    # Controles de la matriz
+    mc1, mc2, mc3, mc4 = st.columns([1.2, 1, 1, 1.5])
+    with mc1:
+        mat_metric = st.radio(
+            t("Metric","Métrica"),
+            options=['eur_mw', 'eur'],
+            format_func=lambda x: t("€/MW·month","€/MW·mes") if x=='eur_mw' else "€ total",
+            horizontal=True, key='mat_metric'
+        )
+    with mc2:
+        mat_qualified = st.checkbox(
+            t("Only qualified in SSAA","Solo qualificadas SSAA"),
+            value=True, key='mat_qualified'
+        )
+    with mc3:
+        mat_up_filter = st.checkbox(
+            t("Filter by UP","Filtrar por UP"),
+            value=False, key='mat_up_filter'
+        )
+    with mc4:
+        if mat_up_filter:
+            all_ups_main = sorted(allh_main['UP'].unique().tolist())
+            mat_up_sel = st.multiselect(
+                t("UPs to include","UPs a incluir"),
+                options=all_ups_main,
+                default=all_ups_main[:5],
+                key='mat_up_sel',
+                label_visibility='collapsed'
+            )
+        else:
+            mat_up_sel = None
+
+    # Calcular n_meses para normalizar €/MW·mes
+    n_months = max(1, round((end_date - start_date).days / 30.44))
+
+    def build_matrix(tech):
+        df_m = allh_main[allh_main['Tech'] == tech].copy()
+
+        if mat_qualified:
+            mask_q = (df_m['Profit_rt'] != 0) | (df_m['Profit_b'] != 0) | (df_m['Profit_t'] != 0)
+            valid_ups_q = df_m.loc[mask_q, 'UP'].unique()
+            df_m = df_m[df_m['UP'].isin(valid_ups_q)]
+
+        if mat_up_filter and mat_up_sel:
+            df_m = df_m[df_m['UP'].isin(mat_up_sel)]
+
+        if df_m.empty:
+            return pd.DataFrame(), pd.DataFrame()
+
+        # Agregado por MA y UP (para poder filtrar por UP)
+        if mat_up_filter and mat_up_sel:
+            grp_col = 'UP'
+        else:
+            grp_col = 'MA'
+
+        agg_cols = list(MARKET_AVAIL.keys())
+        df_agg = df_m.groupby([grp_col], observed=True)[agg_cols].sum(numeric_only=True).reset_index()
+        df_agg.columns = [grp_col] + [MARKET_AVAIL[c] for c in agg_cols]
+        df_agg[grp_col] = df_agg[grp_col].astype(str)
+
+        market_labels = list(MARKET_AVAIL.values())
+
+        if mat_metric == 'eur_mw':
+            # Unir potencia instalada
+            if grp_col == 'UP':
+                df_agg = pd.merge(df_agg, df_power, left_on='UP', right_on='UP', how='left')
+                for col in market_labels:
+                    df_agg[col] = (df_agg[col] / (df_agg['Power MW'] * n_months)).replace([np.inf,-np.inf], 0).fillna(0)
+                df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
+            else:
+                # Para MA: sumar potencia de todas sus UPs
+                power_ma = pd.merge(
+                    allh_main[allh_main['Tech'] == tech][['MA','UP']].drop_duplicates(),
+                    df_power, on='UP', how='left'
+                ).groupby('MA', observed=True)['Power MW'].sum().reset_index()
+                df_agg = pd.merge(df_agg, power_ma, left_on='MA', right_on='MA', how='left')
+                for col in market_labels:
+                    df_agg[col] = (df_agg[col] / (df_agg['Power MW'] * n_months)).replace([np.inf,-np.inf], 0).fillna(0)
+                df_agg = df_agg.drop(columns=['Power MW'], errors='ignore')
+            unit_label = "€/MW·mes"
+        else:
+            unit_label = "€"
+
+        # Total por fila para ordenar
+        df_agg['_total'] = df_agg[market_labels].sum(axis=1)
+        df_agg = df_agg.sort_values('_total', ascending=False).drop(columns='_total')
+        df_agg = df_agg.set_index(grp_col)
+
+        return df_agg, unit_label
+
+    def render_matrix(tech, color_scale, title_color):
+        df_mat, unit_label = build_matrix(tech)
+        if df_mat.empty:
+            st.info(t(f"No data for {tech}.","Sin datos para {tech}."))
+            return
+
+        section_header("📊", f"<span style='color:{title_color}'>{tech}</span> — {unit_label}")
+
+        z = df_mat.values
+        fmt = ".0f" if unit_label == "€" else ".1f"
+        text_mat = [[f"{v:{fmt}}" for v in row] for row in z]
+
+        # Colorscale: rojo→blanco→verde centrado en 0
+        colorscale = [
+            [0.0,  "#b91c1c"],
+            [0.35, "#fca5a5"],
+            [0.5,  "#f8fafc"],
+            [0.65, "#86efac"],
+            [1.0,  "#15803d"],
+        ]
+
+        fig = go.Figure(go.Heatmap(
+            z=z,
+            x=df_mat.columns.tolist(),
+            y=df_mat.index.tolist(),
+            colorscale=colorscale,
+            zmid=0,
+            text=text_mat,
+            texttemplate="<b>%{text}</b>",
+            textfont=dict(size=11),
+            hovertemplate="<b>%{y}</b> · <b>%{x}</b><br>%{z:,.1f} " + unit_label + "<extra></extra>",
+            colorbar=dict(
+                title=dict(text=unit_label, font=dict(color="#475569", size=11)),
+                tickfont=dict(color="#475569", size=10),
+                thickness=12, outlinewidth=0,
+            )
+        ))
+
+        # Línea vertical entre mercados normales y secundaria si aplica
+        sec_cols = [t('Sec. Band','Banda Sec.'), t('Sec. Energy','Energía Sec.')]
+        if any(c in df_mat.columns for c in sec_cols):
+            n_before = sum(1 for c in df_mat.columns if c not in sec_cols)
+            if 0 < n_before < len(df_mat.columns):
+                fig.add_shape(type="line", xref="x", yref="paper",
+                              x0=n_before - 0.5, x1=n_before - 0.5, y0=0, y1=1,
+                              line=dict(color="#94a3b8", width=1.5, dash="dot"))
+
+        fig.update_layout(
+            paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+            font=dict(family="Inter", color="#475569"),
+            title_font=dict(family="Inter", color="#1e293b", size=13),
+            margin=dict(l=10, r=60, t=20, b=60),
+            height=max(250, len(df_mat) * 34 + 100),
+            xaxis=dict(side='bottom', tickangle=-20, tickfont=dict(size=11),
+                       gridcolor="rgba(0,0,0,0)"),
+            yaxis=dict(tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)", autorange='reversed'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Tabla descargable debajo del heatmap
+        with st.expander(t("📋 Show data table","📋 Ver tabla de datos"), expanded=False):
+            fmt_str = "{:,.0f} €" if unit_label == "€" else "{:,.1f} €/MW·mes"
+            st.dataframe(
+                df_mat.style
+                .format(fmt_str)
+                .background_gradient(cmap='RdYlGn', axis=None),
+                use_container_width=True
+            )
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        render_matrix('Solar PV', 'YlOrRd', '#d97706')
+    with col_m2:
+        render_matrix('Wind', 'Greens', '#059669')
+
+    st.markdown("---")
 
     def make_boxplot(tech, color_main, color_highlight):
         data = grouped[grouped['Tech'] == tech].copy()
