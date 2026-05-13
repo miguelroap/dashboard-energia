@@ -918,18 +918,18 @@ elif seleccion_menu == name_mra:
         else:
             cols_to_groupby = ['Tech','MA','Day','hour'] if is_hourly else ['Tech','MA','Day']
             numeric_cols_avail = ['PBF','Energy_p48','Energy_RT1','Profit_rt','Profit_t','Profit_rr',
-                                  'Profit_se','Profit_b','Profit_i','Profit_tr','Profit_p48','Energy_tr',
+                                  'Profit_se','Profit_b','Profit_i','Profit_tr','Profit_tr_s','Profit_p48','Energy_tr',
                                   'Energy_rt','Energy_t','Energy_rr','Energy_se','Energy_i','Rev_spot']
             for c in numeric_cols_avail:
                 if c not in up_df.columns: up_df[c] = 0.0
 
             up_hourly = up_df.groupby(cols_to_groupby, observed=True)[numeric_cols_avail].sum(numeric_only=True).reset_index()
             up_hourly['Year_Month'] = up_hourly['Day'].dt.to_period('M').astype(str)
-            up_hourly['Profit_AASS'] = up_hourly[['Profit_rt','Profit_t','Profit_rr','Profit_se','Profit_b','Profit_tr']].sum(axis=1)
+            up_hourly['Profit_AASS'] = up_hourly[['Profit_rt','Profit_t','Profit_rr','Profit_se','Profit_b','Profit_tr_s']].sum(axis=1)
             up_hourly['Energy_AASS'] = up_hourly[['Energy_rt','Energy_t','Energy_rr','Energy_se','Energy_tr']].sum(axis=1)
             if up_hourly['Profit_p48'].sum() == 0 and 'Rev_spot' in up_hourly.columns:
                 up_hourly['Profit_p48'] = up_hourly['Rev_spot']
-            cols_mkts = ['Profit_rt','Profit_t','Profit_rr','Profit_b','Profit_se','Profit_i','Profit_tr']
+            cols_mkts = ['Profit_rt','Profit_t','Profit_rr','Profit_b','Profit_se','Profit_i','Profit_tr_s']
             up_hourly['Profit_total'] = up_hourly[cols_mkts].sum(axis=1)
 
             # --- KPI CARDS ---
@@ -950,7 +950,7 @@ elif seleccion_menu == name_mra:
             wf_data = {
                 'Spot':        total_row.get('Profit_p48',0)/energy_base,
                 'RRTT Ph2':    total_row.get('Profit_rt',0)/energy_base,
-                'RT5':         total_row.get('Profit_tr',0)/energy_base,
+                'RT5_strategy': total_row.get('Profit_tr_s',0)/energy_base,
                 'Tertiary':    total_row.get('Profit_t',0)/energy_base,
                 'RR':          total_row.get('Profit_rr',0)/energy_base,
                 'Sec. Band':   total_row.get('Profit_b',0)/energy_base,
@@ -1054,13 +1054,13 @@ elif seleccion_menu == name_mra:
             group_col = 'Day' if date_range_days <= 10 else 'Year_Month'
             group_col_name = 'Date' if group_col == 'Day' else 'Month'
 
-            up_summary = up_hourly.groupby([group_col], observed=True)[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr','Profit_i']].sum(numeric_only=True).reset_index()
+            up_summary = up_hourly.groupby([group_col], observed=True)[['PBF','Energy_p48','Energy_RT1','Profit_AASS','Profit_tr_s','Profit_i']].sum(numeric_only=True).reset_index()
             up_summary['% P48 vs PBF'] = up_summary['Energy_p48'] / up_summary['PBF'].replace(0,np.nan)
             up_summary['% RT1 vs PBF'] = -up_summary['Energy_RT1'] / up_summary['PBF'].replace(0,np.nan)
             up_summary['Intras €/MWh']  = up_summary['Profit_i'] / up_summary['Energy_p48'].replace(0,np.nan)
             up_summary['AASS €/MWh']    = up_summary['Profit_AASS'] / up_summary['Energy_p48'].replace(0,np.nan)
 
-            df_table = up_summary[[group_col,'% P48 vs PBF','% RT1 vs PBF','Profit_tr','Profit_AASS','Profit_i','Intras €/MWh','AASS €/MWh']].copy()
+            df_table = up_summary[[group_col,'% P48 vs PBF','% RT1 vs PBF','Profit_tr_s','Profit_AASS','Profit_i','Intras €/MWh','AASS €/MWh']].copy()
             df_table.columns = [group_col_name,'% P48 vs PBF','% RT1 vs PBF','Real Time (€)','AASS (€)','Intras (€)','Intras (€/MWh)','AASS (€/MWh)']
             df_table[group_col_name] = df_table[group_col_name].astype(str)
 
