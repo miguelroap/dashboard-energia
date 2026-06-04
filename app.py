@@ -543,7 +543,13 @@ if seleccion_menu == name_main:
             return None
 
         grp = group_col_box
-        order = data.groupby(grp, observed=True)['Profit_per_MW'].mean().sort_values(ascending=False).index.tolist()
+        # Calcular mediana por grupo y filtrar los que estén entre -50 y +50 €/MW
+        medians = data.groupby(grp, observed=True)['Profit_per_MW'].median()
+        active_cats = medians[(medians > 50) | (medians < -50)].sort_values(ascending=False).index.tolist()
+        data = data[data[grp].isin(active_cats)]
+        if data.empty:
+            return None
+        order = active_cats
         data[grp] = pd.Categorical(data[grp], categories=order, ordered=True)
         data = data.sort_values(grp)
 
