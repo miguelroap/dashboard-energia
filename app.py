@@ -543,9 +543,9 @@ if seleccion_menu == name_main:
             return None
 
         grp = group_col_box
-        # Calcular mediana por grupo y filtrar los que estén entre -50 y +50 €/MW
+        # Calcular mediana por grupo y filtrar los que estén entre -1 y +1 €/MW
         medians = data.groupby(grp, observed=True)['Profit_per_MW'].median()
-        active_cats = medians[(medians > 50) | (medians < -50)].sort_values(ascending=False).index.tolist()
+        active_cats = medians[(medians > 1) | (medians < -1)].sort_values(ascending=False).index.tolist()
         data = data[data[grp].isin(active_cats)]
         if data.empty:
             return None
