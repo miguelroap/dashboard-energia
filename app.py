@@ -12,6 +12,9 @@ from gcs_loader import (
     gcs_available, load_parquet, load_excel,
     list_files, find_latest_excel, list_parquet_years
 )
+from unit_explorer import (
+    render_unit_explorer, set_loader, set_helpers
+)
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="⚡")
 
@@ -423,6 +426,11 @@ df_rz_map = build_rz_map(str(start_date), str(end_date))
 gc.collect()
 
 # --- NAVEGACIÓN ---
+# Inyección de dependencias en el módulo Unit Explorer (loader + helpers de esta app)
+set_loader(load_parquet)
+set_helpers(metric_card=metric_card, section_header=section_header,
+            base_layout=base_layout, t=t)
+
 cont_nav.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
 name_main    = t("📈 Main Overview", "📈 Resumen Principal")
 name_mra     = t("⚡ MRA Analysis", "⚡ Análisis MRA")
@@ -432,8 +440,9 @@ name_verbund = t("💶 Verbund Profit", "💶 Beneficio Verbund")
 name_evo     = t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 name_supply   = t("🏪 Retailers (Supply)", "🏪 Comercializadoras (Supply)")
 name_portfolio = t("🗂️ MRA Portfolio", "🗂️ Portfolio MRA")
+name_explorer = t("🔬 Unit Explorer", "🔬 Explorador Unidad")
 
-menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply, name_portfolio]
+menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply, name_portfolio, name_explorer]
 seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
@@ -2791,4 +2800,18 @@ elif seleccion_menu == name_portfolio:
     except Exception as e:
         import traceback
         st.error(f"Error Portfolio: {e}\n\n{traceback.format_exc()}")
+    gc.collect()
+
+# ==============================================================================
+# SECCIÓN 9: UNIT EXPLORER (lupa por unidad sobre el horario allh_YYYY-MM)
+# ==============================================================================
+elif seleccion_menu == name_explorer:
+    ma_lookup = (allh[['UP', 'MA']].dropna()
+                 .drop_duplicates('UP').set_index('UP')['MA'].to_dict())
+    render_unit_explorer(
+        start_date, end_date,
+        df_power=df_power,
+        default_up='PEVER',
+        ma_lookup=ma_lookup,
+    )
     gc.collect()
