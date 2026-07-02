@@ -28,65 +28,131 @@ st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", pag
 # ==============================================================================
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    :root{
+        --tinta:#0D1B2E; --tinta-2:#16283F; --lienzo:#F4F6F9; --carta:#FFFFFF;
+        --senal:#1F5EDC; --cobre:#C2660E; --verde:#0B9E6D; --rojo:#DA3A47;
+        --texto:#13233B; --texto-2:#5B6B84; --bruma:#7C8BA3; --hilo:#E3E8F0;
+    }
 
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    .stApp { background: var(--lienzo); }
+    div.block-container { padding-top: 1.3rem; padding-bottom: 2rem; }
 
-    /* Fondo general — blanco roto muy suave */
-    .stApp { background: #f5f7fa; }
-    [data-testid="stSidebar"] {
-        background: #ffffff !important;
-        border-right: 1px solid #e2e8f0;
-        box-shadow: 2px 0 8px rgba(0,0,0,0.04);
-    }
-
-    /* Título principal */
+    /* ── Título: Space Grotesk + firma de gradiente señal→cobre ── */
     h1 {
-        color: #1e293b !important;
-        font-weight: 700; font-size: 1.7rem !important;
-        letter-spacing: -0.5px; padding-bottom: 0.3rem;
+        font-family: 'Space Grotesk', sans-serif !important;
+        color: var(--texto) !important;
+        font-weight: 700; font-size: 1.55rem !important;
+        letter-spacing: -0.4px; padding-bottom: 0.55rem;
+        position: relative;
     }
-    h1 span.accent { color: #2563eb; }
+    h1::after{
+        content:""; position:absolute; left:0; bottom:0;
+        width:180px; height:3px; border-radius:2px;
+        background:linear-gradient(90deg,var(--senal),var(--cobre));
+    }
+    h2, h3 { font-family: 'Space Grotesk', sans-serif !important; }
 
-    /* Headers de sección */
+    /* ── Sidebar: panel de control oscuro ── */
+    [data-testid="stSidebar"] {
+        background: var(--tinta) !important;
+        border-right: 1px solid #22344F;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3, [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label, [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div { color: #E8EEF7; }
+    [data-testid="stSidebar"] hr { border-color: #22344F; }
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        font-size: 0.76rem !important; text-transform: uppercase;
+        letter-spacing: 1.2px; color: #9FB1C9 !important;
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label {
+        border-radius: 8px; padding: 5px 8px; margin: 1px 0;
+        transition: background .12s;
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:hover {
+        background: rgba(255,255,255,0.07);
+    }
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] [data-baseweb="input"] {
+        background: var(--tinta-2) !important; color: #E8EEF7 !important;
+        border-color: #2A3E5C !important;
+    }
+    [data-testid="stSidebar"] .stButton>button {
+        background: transparent; color: #C9D6E8;
+        border: 1px solid #2A3E5C; border-radius: 8px; font-size: 0.8rem;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover {
+        border-color: var(--senal); color: #FFFFFF;
+    }
+
+    /* ── Headers de sección ── */
     .section-header {
         display: flex; align-items: center; gap: 10px;
-        background: #ffffff;
-        border-left: 4px solid #2563eb;
-        border-radius: 0 8px 8px 0;
+        background: var(--carta);
+        border: 1px solid var(--hilo); border-left: 3px solid var(--senal);
+        border-radius: 0 10px 10px 0;
         padding: 10px 16px;
         margin: 1.2rem 0 1rem 0;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        box-shadow: 0 1px 3px rgba(13,27,46,0.05);
     }
     .section-header h3 {
-        color: #1e293b !important; font-size: 0.95rem;
-        font-weight: 600; margin: 0; letter-spacing: 0.1px;
+        font-family: 'Space Grotesk', sans-serif;
+        color: var(--texto) !important; font-size: 0.95rem;
+        font-weight: 600; margin: 0; letter-spacing: 0.2px;
     }
 
-    /* Metric cards */
+    /* ── Metric cards: hairline superior de señal + numeral mono ── */
     .metric-card {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--carta);
+        border: 1px solid var(--hilo);
         border-radius: 12px;
-        padding: 16px 20px; text-align: center;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        padding: 14px 18px 15px; text-align: center;
+        position: relative; overflow: hidden;
+        box-shadow: 0 1px 3px rgba(13,27,46,0.05);
         transition: transform 0.15s, box-shadow 0.15s;
     }
-    .metric-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37,99,235,0.1); }
-    .metric-label { color: #64748b; font-size: 0.70rem; font-weight: 600;
-        text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
-    .metric-value { color: #1e293b; font-size: 1.45rem; font-weight: 700;
+    .metric-card::before{
+        content:""; position:absolute; top:0; left:0; right:0; height:2px;
+        background:linear-gradient(90deg,var(--senal),transparent 70%);
+    }
+    .metric-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(31,94,220,0.12); }
+    .metric-label { color: var(--texto-2); font-size: 0.68rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.9px; margin-bottom: 6px; }
+    .metric-value { color: var(--texto); font-size: 1.45rem; font-weight: 600;
+        font-family: 'JetBrains Mono', monospace; letter-spacing: -0.5px; }
+    .metric-value.positive { color: var(--verde); }
+    .metric-value.negative { color: var(--rojo); }
+    .metric-delta { font-size: 0.72rem; margin-top: 4px; color: var(--bruma);
         font-family: 'JetBrains Mono', monospace; }
-    .metric-value.positive { color: #059669; }
-    .metric-value.negative { color: #dc2626; }
-    .metric-delta { font-size: 0.72rem; margin-top: 4px; color: #94a3b8; }
+
+    /* ── Botones primarios ── */
+    .stButton>button[kind="primary"] {
+        background: var(--senal); border: none; border-radius: 8px;
+        font-weight: 600; letter-spacing: 0.2px;
+    }
+    .stButton>button[kind="primary"]:hover { background: #1749AF; }
+
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid var(--hilo); }
+    .stTabs [data-baseweb="tab"] {
+        font-family: 'Space Grotesk', sans-serif; font-size: 0.85rem;
+        color: var(--texto-2); padding: 6px 14px; border-radius: 8px 8px 0 0;
+    }
+    .stTabs [aria-selected="true"] { color: var(--senal) !important; }
+
+    /* ── Expanders ── */
+    [data-testid="stExpander"] {
+        background: var(--carta); border: 1px solid var(--hilo); border-radius: 10px;
+    }
 
     /* Scrollbar */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-
-    div.block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
+    ::-webkit-scrollbar-track { background: #EEF1F6; }
+    ::-webkit-scrollbar-thumb { background: #C6CFDC; border-radius: 3px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -96,11 +162,11 @@ st.markdown("""
 PLOTLY_THEME = dict(
     template="plotly_white",
     paper_bgcolor="#ffffff",
-    plot_bgcolor="#f8fafc",
-    font=dict(family="Inter, sans-serif", color="#475569", size=12),
-    legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#e2e8f0", borderwidth=1, font=dict(size=11)),
+    plot_bgcolor="#FBFCFE",
+    font=dict(family="Inter, sans-serif", color="#46556B", size=12),
+    legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#E3E8F0", borderwidth=1, font=dict(size=11)),
     margin=dict(l=10, r=10, t=45, b=10),
-    colorway=["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#ea580c", "#65a30d"],
+    colorway=["#1F5EDC", "#0B9E6D", "#C2660E", "#DA3A47", "#6D4AC9", "#0E8DA8", "#E0700F", "#5F9E0B"],
 )
 
 def base_layout(**extra):
@@ -108,20 +174,20 @@ def base_layout(**extra):
     layout = dict(
         template="plotly_white",
         paper_bgcolor="#ffffff",
-        plot_bgcolor="#f8fafc",
-        font=dict(family="Inter, sans-serif", color="#475569", size=12),
-        title_font=dict(family="Inter, sans-serif", color="#1e293b", size=13),
-        legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#e2e8f0", borderwidth=1, font=dict(size=11)),
+        plot_bgcolor="#FBFCFE",
+        font=dict(family="Inter, sans-serif", color="#46556B", size=12),
+        title_font=dict(family="Space Grotesk, sans-serif", color="#13233B", size=13),
+        legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#E3E8F0", borderwidth=1, font=dict(size=11)),
         margin=dict(l=10, r=10, t=45, b=10),
     )
     layout.update(extra)
     return layout
 
-C_POS    = "#059669"
-C_NEG    = "#dc2626"
-C_BASE   = "#2563eb"
-C_ACCENT = "#7c3aed"
-C_WARN   = "#d97706"
+C_POS    = "#0B9E6D"
+C_NEG    = "#DA3A47"
+C_BASE   = "#1F5EDC"
+C_ACCENT = "#6D4AC9"
+C_WARN   = "#C2660E"
 
 def section_header(icon, title):
     st.markdown(f'<div class="section-header"><h3>{icon} {title}</h3></div>', unsafe_allow_html=True)
@@ -183,13 +249,13 @@ def check_password():
     _, col, _ = st.columns([1, 1.4, 1])
     with col:
         st.markdown(f"""
-        <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;
+        <div style="background:#ffffff;border:1px solid #E3E8F0;border-radius:16px;
                     padding:2.5rem 2rem;margin-top:3rem;text-align:center;
                     box-shadow:0 4px 20px rgba(0,0,0,0.07);">
             <div style="font-size:2.8rem;margin-bottom:0.5rem;">🔒</div>
-            <h2 style="color:#1e293b;margin:0 0 0.3rem 0;font-size:1.4rem;">
+            <h2 style="color:#13233B;margin:0 0 0.3rem 0;font-size:1.4rem;">
                 {t('Restricted Access','Acceso Restringido')}</h2>
-            <p style="color:#64748b;font-size:0.85rem;margin:0 0 1.5rem 0;">
+            <p style="color:#5B6B84;font-size:0.85rem;margin:0 0 1.5rem 0;">
                 {t('Enter your password to continue.','Introduce tu contraseña para continuar.')}</p>
         </div>""", unsafe_allow_html=True)
 
@@ -605,13 +671,13 @@ if seleccion_menu == name_main:
 
         fig.add_hline(y=0, line_dash="dot", line_color="#4b5563", line_width=1)
         fig.update_layout(**base_layout(
-            title=dict(text=f"<b>{tech}</b> · {box_title_suffix}", font=dict(size=13, color="#1e293b")),
+            title=dict(text=f"<b>{tech}</b> · {box_title_suffix}", font=dict(size=13, color="#13233B")),
             xaxis_title="",
             yaxis_title=t("Avg Monthly Profit / MW (€)", "Profit Mensual Medio / MW (€)"),
             height=430,
         ))
-        fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-35)
-        fig.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+        fig.update_xaxes(gridcolor="#E3E8F0", tickangle=-35)
+        fig.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE")
         return fig
 
     # Aviso si modo RZ y no hay datos de ups_dashboard mensual
@@ -792,25 +858,25 @@ if seleccion_menu == name_main:
             text_mat = [[f"{v:,.1f}" for v in row] for row in z]; hover_fmt = ":,.2f"
         else:
             text_mat = [[f"{v:,.0f}" for v in row] for row in z]; hover_fmt = ":,.0f"
-        colorscale = [[0.0,"#b91c1c"],[0.35,"#fca5a5"],[0.5,"#f8fafc"],[0.65,"#86efac"],[1.0,"#15803d"]]
+        colorscale = [[0.0,"#b91c1c"],[0.35,"#fca5a5"],[0.5,"#FBFCFE"],[0.65,"#86efac"],[1.0,"#15803d"]]
         fig = go.Figure(go.Heatmap(
             z=z, x=df_mat.columns.tolist(), y=df_mat.index.tolist(),
             colorscale=colorscale, zmid=0, text=text_mat,
             texttemplate="<b>%{text}</b>", textfont=dict(size=11),
             hovertemplate=f"<b>%{{y}}</b> · <b>%{{x}}</b><br>%{{z{hover_fmt}}} {unit_label}<extra></extra>",
-            colorbar=dict(title=dict(text=unit_label, font=dict(color="#475569",size=11)),
-                          tickfont=dict(color="#475569",size=10), thickness=12, outlinewidth=0)
+            colorbar=dict(title=dict(text=unit_label, font=dict(color="#46556B",size=11)),
+                          tickfont=dict(color="#46556B",size=10), thickness=12, outlinewidth=0)
         ))
         sec_cols = [t('Sec. Band','Banda Sec.'), t('Sec. Energy','Energía Sec.')]
         n_before = sum(1 for c in df_mat.columns if c not in sec_cols)
         if any(c in df_mat.columns for c in sec_cols) and 0 < n_before < len(df_mat.columns):
             fig.add_shape(type="line", xref="x", yref="paper",
                           x0=n_before-0.5, x1=n_before-0.5, y0=0, y1=1,
-                          line=dict(color="#94a3b8", width=1.5, dash="dot"))
+                          line=dict(color="#8B99AE", width=1.5, dash="dot"))
         fig.update_layout(
             paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-            font=dict(family="Inter", color="#475569"),
-            title_font=dict(family="Inter", color="#1e293b", size=13),
+            font=dict(family="Inter", color="#46556B"),
+            title_font=dict(family="Inter", color="#13233B", size=13),
             margin=dict(l=10,r=70,t=15,b=60),
             height=max(250, len(df_mat)*34+100),
             xaxis=dict(side='bottom', tickangle=-20, tickfont=dict(size=11), gridcolor="rgba(0,0,0,0)"),
@@ -826,9 +892,9 @@ if seleccion_menu == name_main:
 
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        render_matrix('Solar PV', '#d97706')
+        render_matrix('Solar PV', '#C2660E')
     with col_m2:
-        render_matrix('Wind', '#059669')
+        render_matrix('Wind', '#0B9E6D')
 
     # ── RANKING: días como mejor MA por tecnología ────────────────────────────
     st.markdown("---")
@@ -872,11 +938,11 @@ if seleccion_menu == name_main:
                 ))
                 fig_rk.update_layout(**base_layout(
                     title=dict(text=f"<b>{tech}</b> · " + t('Days as best MA','Días como mejor MA'),
-                               font=dict(size=13, color="#1e293b")),
+                               font=dict(size=13, color="#13233B")),
                     xaxis_title=t("Days","Días"), height=max(300, len(rk)*38 + 80),
                     margin=dict(l=10, r=80, t=45, b=10), showlegend=False,
                 ))
-                fig_rk.update_xaxes(gridcolor="#e2e8f0")
+                fig_rk.update_xaxes(gridcolor="#E3E8F0")
                 fig_rk.update_yaxes(gridcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig_rk, use_container_width=True)
 
@@ -930,15 +996,15 @@ if seleccion_menu == name_main:
             layout=go.Layout(
                 title=dict(
                     text=f"<b>{tech_anim}</b> · " + t('Daily Profit/MW – ','Profit/MW Diario – ') + (first['Day_str'].iloc[0] if not first.empty else ''),
-                    font=dict(size=13, color="#1e293b"), x=0, xanchor='left'),
+                    font=dict(size=13, color="#13233B"), x=0, xanchor='left'),
                 xaxis=dict(
                     title=t("Daily Profit/MW (€)","Profit/MW Diario (€)"),
-                    gridcolor="#e2e8f0", range=[0, x_max],
+                    gridcolor="#E3E8F0", range=[0, x_max],
                     fixedrange=True),
                 yaxis=dict(gridcolor="rgba(0,0,0,0)", fixedrange=True),
-                paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                font=dict(family="Inter", color="#475569"),
-                title_font=dict(family="Inter", color="#1e293b", size=13),
+                paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                font=dict(family="Inter", color="#46556B"),
+                title_font=dict(family="Inter", color="#13233B", size=13),
                 # Botones fijos en esquina superior izquierda, fuera del área del gráfico
                 updatemenus=[dict(
                     type="buttons", showactive=False,
@@ -946,8 +1012,8 @@ if seleccion_menu == name_main:
                     x=0.0, xanchor="left",
                     y=1.18, yanchor="top",
                     pad=dict(r=8, t=0),
-                    bgcolor="#f1f5f9", bordercolor="#e2e8f0", borderwidth=1,
-                    font=dict(size=12, color="#1e293b"),
+                    bgcolor="#EEF1F6", bordercolor="#E3E8F0", borderwidth=1,
+                    font=dict(size=12, color="#13233B"),
                     buttons=[
                         dict(label="▶  Play",
                              method="animate",
@@ -973,11 +1039,11 @@ if seleccion_menu == name_main:
                     transition=dict(duration=200),
                     x=0.0, y=-0.06,
                     len=1.0,
-                    bgcolor="#f1f5f9",
-                    bordercolor="#e2e8f0",
+                    bgcolor="#EEF1F6",
+                    bordercolor="#E3E8F0",
                     activebgcolor=color_anim,
                     currentvalue=dict(
-                        font=dict(size=11, color="#475569"),
+                        font=dict(size=11, color="#46556B"),
                         prefix=t("Date: ","Fecha: "),
                         visible=True, xanchor="center"),
                 )],
@@ -999,7 +1065,7 @@ if seleccion_menu == name_main:
                 layout=go.Layout(
                     title=dict(
                         text=f"<b>{tech_anim}</b> · " + t('Daily Profit/MW – ','Profit/MW Diario – ') + (snap['Day_str'].iloc[0] if not snap.empty else ''),
-                        font=dict(size=13, color="#1e293b"), x=0, xanchor='left'),
+                        font=dict(size=13, color="#13233B"), x=0, xanchor='left'),
                 ),
                 name=f"frame_{i}"
             ) for i, snap in enumerate(frames_list)]
@@ -1120,13 +1186,13 @@ elif seleccion_menu == name_mra:
                 ))
                 fig_wf.update_layout(
                     title="", yaxis_title="€/MWh",
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                    font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                     margin=dict(l=10,r=10,t=20,b=10), height=380,
                     showlegend=False
                 )
-                fig_wf.update_xaxes(gridcolor="#e2e8f0")
-                fig_wf.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+                fig_wf.update_xaxes(gridcolor="#E3E8F0")
+                fig_wf.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE")
 
                 # Barras acumuladas totales
                 profit_total_data = total_row[[c for c in cols_mkts if c in total_row.index]].sort_values(ascending=False)
@@ -1141,14 +1207,14 @@ elif seleccion_menu == name_mra:
                 ))
                 fig_bar.update_layout(
                     title=t("Total Accumulated Profit by Market","Profit Acumulado por Mercado"),
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                    font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                     xaxis_title="€", yaxis_title="",
                     margin=dict(l=10,r=80,t=40,b=10), height=380,
                     showlegend=False
                 )
-                fig_bar.update_xaxes(gridcolor="#e2e8f0")
-                fig_bar.update_yaxes(gridcolor="#e2e8f0")
+                fig_bar.update_xaxes(gridcolor="#E3E8F0")
+                fig_bar.update_yaxes(gridcolor="#E3E8F0")
 
                 col_wf, col_br = st.columns([1.2, 1])
                 with col_wf: st.plotly_chart(fig_wf, use_container_width=True)
@@ -1159,7 +1225,7 @@ elif seleccion_menu == name_mra:
             daily_data = up_hourly.groupby('Day')[cols_mkts].sum().reset_index()
             daily_data['Day_str'] = daily_data['Day'].dt.strftime('%d/%m/%Y')
 
-            color_seq = ["#00d4ff","#7c3aed","#f59e0b","#34d399","#f87171","#a78bfa","#fb923c"]
+            color_seq = ["#00d4ff","#6D4AC9","#f59e0b","#34d399","#f87171","#a78bfa","#fb923c"]
             fig_daily = go.Figure()
             for i, col in enumerate(cols_mkts):
                 label = PROFIT_MAP.get(col, col)
@@ -1171,14 +1237,14 @@ elif seleccion_menu == name_mra:
                 ))
             fig_daily.update_layout(
                 barmode='stack', yaxis_title="Profit (€)",
-                paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                 legend=dict(orientation='h', yanchor='bottom', y=1.01, xanchor='right', x=1, font=dict(size=10)),
                 hovermode='x unified',
                 margin=dict(l=10,r=10,t=50,b=10), height=400
             )
-            fig_daily.update_xaxes(gridcolor="#e2e8f0")
-            fig_daily.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+            fig_daily.update_xaxes(gridcolor="#E3E8F0")
+            fig_daily.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE")
             st.plotly_chart(fig_daily, use_container_width=True)
 
             # --- TABLA RESUMEN ---
@@ -1301,14 +1367,14 @@ elif seleccion_menu == name_rt5:
                     hovertemplate="<b>%{y}</b><br>Profit RT5: %{x:,.0f} €<extra></extra>"
                 ))
                 fig.update_layout(
-                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13, color="#1e293b")),
+                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13, color="#13233B")),
                     xaxis_title="Total Profit RT5 (€)", yaxis_title="",
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                    font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                     margin=dict(l=10,r=80,t=45,b=10), height=400
                 )
-                fig.update_xaxes(gridcolor="#e2e8f0")
-                fig.update_yaxes(gridcolor="#e2e8f0")
+                fig.update_xaxes(gridcolor="#E3E8F0")
+                fig.update_yaxes(gridcolor="#E3E8F0")
                 return fig
 
             with col_top_s:
@@ -1350,14 +1416,14 @@ elif seleccion_menu == name_rt5:
                     hovertemplate="<b>%{x}</b><br>Profit RT5: %{y:,.0f} €<extra></extra>"
                 ))
                 fig.update_layout(
-                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13, color="#1e293b")),
+                    title=dict(text=f"<b>{tech}</b>", font=dict(size=13, color="#13233B")),
                     xaxis_title="", yaxis_title="Total Profit RT5 (€)",
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                    font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                     margin=dict(l=10,r=10,t=45,b=10), height=360
                 )
-                fig.update_xaxes(gridcolor="#e2e8f0", tickangle=-30)
-                fig.update_yaxes(gridcolor="#e2e8f0")
+                fig.update_xaxes(gridcolor="#E3E8F0", tickangle=-30)
+                fig.update_yaxes(gridcolor="#E3E8F0")
                 return fig
 
             with col_evo_s:
@@ -1415,7 +1481,7 @@ elif seleccion_menu == name_gnera:
                 colorscale=[
                     [0.0,  "#b91c1c"],
                     [0.35, "#fca5a5"],
-                    [0.5,  "#f8fafc"],
+                    [0.5,  "#FBFCFE"],
                     [0.65, "#86efac"],
                     [1.0,  "#15803d"],
                 ],
@@ -1425,8 +1491,8 @@ elif seleccion_menu == name_gnera:
                 textfont=dict(size=12),
                 hovertemplate="<b>%{y}</b> · <b>%{x}</b><br>%{z:,.1f} €/MW<extra></extra>",
                 colorbar=dict(
-                    title=dict(text="€/MW", font=dict(color="#475569", size=11)),
-                    tickfont=dict(color="#475569", size=10),
+                    title=dict(text="€/MW", font=dict(color="#46556B", size=11)),
+                    tickfont=dict(color="#46556B", size=10),
                     thickness=14, len=0.9,
                     outlinewidth=0,
                     bgcolor="rgba(255,255,255,0)",
@@ -1439,13 +1505,13 @@ elif seleccion_menu == name_gnera:
                 fig_hm.add_shape(
                     type="line", xref="x", yref="paper",
                     x0=n_comp - 0.5, x1=n_comp - 0.5, y0=0, y1=1,
-                    line=dict(color="#94a3b8", width=2, dash="dot")
+                    line=dict(color="#8B99AE", width=2, dash="dot")
                 )
 
             fig_hm.update_layout(
                 paper_bgcolor="#ffffff",
                 plot_bgcolor="#ffffff",
-                font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                 margin=dict(l=10, r=60, t=20, b=60),
                 height=max(220, len(df_hm) * 72 + 80),
                 xaxis=dict(side='bottom', tickangle=-25, tickfont=dict(size=11),
@@ -1470,12 +1536,12 @@ elif seleccion_menu == name_gnera:
                 ))
                 fig_bar_g.update_layout(
                     title=t("Total Profit by Installation (€/MW)","Profit Total por Instalación (€/MW)"),
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                    font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                     margin=dict(l=10, r=100, t=45, b=10),
                     height=max(200, len(df_bar_gnera) * 55 + 60),
                     showlegend=False,
-                    xaxis=dict(gridcolor="#e2e8f0", zerolinecolor="#94a3b8"),
+                    xaxis=dict(gridcolor="#E3E8F0", zerolinecolor="#8B99AE"),
                     yaxis=dict(gridcolor="rgba(0,0,0,0)"),
                 )
                 st.plotly_chart(fig_bar_g, use_container_width=True)
@@ -1549,7 +1615,7 @@ elif seleccion_menu == name_verbund:
             df_final_v[cols_to_show].style
             .format({c:"{:,.2f} €" for c in num_cols})
             .background_gradient(subset=['Total Profit','Profit Verbund'], cmap='RdYlGn')
-            .apply(lambda row: ['font-weight:bold; background:#f1f5f9' if row['UP']=='Total' else '' for _ in row], axis=1),
+            .apply(lambda row: ['font-weight:bold; background:#EEF1F6' if row['UP']=='Total' else '' for _ in row], axis=1),
             use_container_width=True
         )
 
@@ -1567,14 +1633,14 @@ elif seleccion_menu == name_verbund:
             ))
             fig_v.update_layout(
                 title=t("Verbund Profit by Installation","Profit Verbund por Instalación"),
-                paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                font=dict(family="Inter", color="#475569"), title_font=dict(family="Inter", color="#1e293b", size=13),
+                paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
                 xaxis_title="€", yaxis_title="",
                 margin=dict(l=10,r=100,t=50,b=10), height=420,
                 showlegend=False
             )
-            fig_v.update_xaxes(gridcolor="#e2e8f0")
-            fig_v.update_yaxes(gridcolor="#e2e8f0")
+            fig_v.update_xaxes(gridcolor="#E3E8F0")
+            fig_v.update_yaxes(gridcolor="#E3E8F0")
             st.plotly_chart(fig_v, use_container_width=True)
 
     except Exception as e:
@@ -1655,17 +1721,17 @@ elif seleccion_menu == name_evo:
                 )
                 fig.update_traces(line=dict(width=2), marker=dict(size=5 if not is_daily_evo else 0))
                 fig.update_layout(
-                    title=dict(text=title, font=dict(size=12, color="#1e293b")),
+                    title=dict(text=title, font=dict(size=12, color="#13233B")),
                     xaxis_title="", yaxis_title=y_label,
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(family="Inter", color="#475569"),
-                    title_font=dict(family="Inter", color="#1e293b", size=13),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                    font=dict(family="Inter", color="#46556B"),
+                    title_font=dict(family="Inter", color="#13233B", size=13),
                     legend=dict(title="", font=dict(size=9), bgcolor="rgba(0,0,0,0)"),
                     margin=dict(l=10,r=10,t=45,b=10), height=360,
                     hovermode='x unified'
                 )
-                fig.update_xaxes(gridcolor="#e2e8f0", tickangle=tick_angle, tickfont=dict(size=tick_size))
-                fig.update_yaxes(gridcolor="#e2e8f0")
+                fig.update_xaxes(gridcolor="#E3E8F0", tickangle=tick_angle, tickfont=dict(size=tick_size))
+                fig.update_yaxes(gridcolor="#E3E8F0")
                 return fig
 
             # Layout 2×2: €/MWh y €/MW arriba; Producción y Profit k€ abajo
@@ -1815,7 +1881,7 @@ elif seleccion_menu == name_supply:
                 fig_best.update_layout(**base_layout(
                     xaxis_title="€", height=420,
                     margin=dict(l=10,r=100,t=20,b=10)))
-                fig_best.update_xaxes(gridcolor="#e2e8f0")
+                fig_best.update_xaxes(gridcolor="#E3E8F0")
                 fig_best.update_yaxes(gridcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig_best, use_container_width=True)
 
@@ -1842,7 +1908,7 @@ elif seleccion_menu == name_supply:
                 fig_worst.update_layout(**base_layout(
                     xaxis_title="€", height=420,
                     margin=dict(l=10,r=100,t=20,b=10)))
-                fig_worst.update_xaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+                fig_worst.update_xaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE")
                 fig_worst.update_yaxes(gridcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig_worst, use_container_width=True)
 
@@ -1867,7 +1933,7 @@ elif seleccion_menu == name_supply:
                     hovertemplate="<b>%{label}</b><br>%{value:.1f}%<extra></extra>",
                 ))
                 fig.update_layout(**base_layout(
-                    title=dict(text=label, font=dict(size=13, color="#1e293b")),
+                    title=dict(text=label, font=dict(size=13, color="#13233B")),
                     height=360, margin=dict(l=10,r=10,t=50,b=10),
                     showlegend=False))
                 return fig
@@ -1970,7 +2036,7 @@ elif seleccion_menu == name_supply:
                             line=dict(color='white', width=1.5 if labeled else 0.8)),
                         text=sub['MA'] if labeled else None,
                         textposition='top center',
-                        textfont=dict(size=9, color="#1e293b", family="Inter"),
+                        textfont=dict(size=9, color="#13233B", family="Inter"),
                         name=name_,
                         showlegend=(not labeled),   # una sola entrada por color en la leyenda
                         legendgroup=name_,
@@ -1990,12 +2056,12 @@ elif seleccion_menu == name_supply:
                     ))
 
             # Líneas de referencia
-            fig_sc.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1.5)
+            fig_sc.add_hline(y=0, line_dash="dot", line_color="#8B99AE", line_width=1.5)
             avg_share = sc_data['Share_i_pct'].mean()
-            fig_sc.add_vline(x=avg_share, line_dash="dot", line_color="#94a3b8", line_width=1.5,
+            fig_sc.add_vline(x=avg_share, line_dash="dot", line_color="#8B99AE", line_width=1.5,
                              annotation_text=t("Avg share","Cuota media"),
                              annotation_position="top right",
-                             annotation_font=dict(size=10, color="#94a3b8"))
+                             annotation_font=dict(size=10, color="#8B99AE"))
 
             fig_sc.update_layout(**base_layout(
                 xaxis_title=t("Intraday Market Share (%)","Cuota de Mercado Intradiario (%)"),
@@ -2004,8 +2070,8 @@ elif seleccion_menu == name_supply:
                 showlegend=True,
                 margin=dict(l=10,r=10,t=20,b=10),
             ))
-            fig_sc.update_xaxes(gridcolor="#e2e8f0")
-            fig_sc.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+            fig_sc.update_xaxes(gridcolor="#E3E8F0")
+            fig_sc.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE")
             st.plotly_chart(fig_sc, use_container_width=True)
 
         # ────────────────────────────────────────────────────────
@@ -2048,16 +2114,16 @@ elif seleccion_menu == name_supply:
                         text=f"  {ma_name}",
                         showarrow=False, xanchor='left',
                         font=dict(size=10, color=trace.line.color))
-                fig.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1)
+                fig.add_hline(y=0, line_dash="dot", line_color="#8B99AE", line_width=1)
                 fig.update_layout(**base_layout(
-                    title=dict(text=title, font=dict(size=13, color="#1e293b")),
+                    title=dict(text=title, font=dict(size=13, color="#13233B")),
                     yaxis_title=t("Accumulated Profit (k€)","Beneficio Acumulado (k€)"),
                     height=400, showlegend=False,
                     margin=dict(l=10,r=120,t=45,b=10),
                     hovermode='x unified',
                 ))
-                fig.update_xaxes(gridcolor="#e2e8f0")
-                fig.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8")
+                fig.update_xaxes(gridcolor="#E3E8F0")
+                fig.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE")
                 return fig
 
             with col_ev1:
@@ -2099,16 +2165,16 @@ elif seleccion_menu == name_supply:
                 ), secondary_y=True)
                 fig_daily.update_layout(**base_layout(
                     title=dict(text=f"<b>{best_ma_str}</b> · {t('Daily Intraday Performance','Desempeño Intradiario Diario')}",
-                               font=dict(size=13, color="#1e293b")),
+                               font=dict(size=13, color="#13233B")),
                     height=380, hovermode='x unified',
                     margin=dict(l=10,r=10,t=45,b=10),
                     legend=dict(orientation='h', yanchor='bottom', y=1.01, xanchor='right', x=1)
                 ))
                 fig_daily.update_yaxes(title_text=t("Daily Profit (€)","Beneficio Diario (€)"),
-                                       gridcolor="#e2e8f0", secondary_y=False)
+                                       gridcolor="#E3E8F0", secondary_y=False)
                 fig_daily.update_yaxes(title_text="€/MWh", secondary_y=True,
                                        gridcolor="rgba(0,0,0,0)")
-                fig_daily.update_xaxes(gridcolor="#e2e8f0")
+                fig_daily.update_xaxes(gridcolor="#E3E8F0")
                 st.plotly_chart(fig_daily, use_container_width=True)
 
         # ────────────────────────────────────────────────────────
@@ -2154,12 +2220,12 @@ elif seleccion_menu == name_supply:
                                 'Day':'', 'MA_str':'MA'},
                         title=t("Daily Intraday Profit (€)","Beneficio Intradiario Diario (€)")
                     )
-                    fig_i1.add_hline(y=0, line_dash="dot", line_color="#94a3b8")
+                    fig_i1.add_hline(y=0, line_dash="dot", line_color="#8B99AE")
                     fig_i1.update_traces(line=dict(width=2), marker=dict(size=4))
                     fig_i1.update_layout(**base_layout(height=370, hovermode='x unified',
                         margin=dict(l=10,r=10,t=45,b=10)))
-                    fig_i1.update_xaxes(gridcolor="#e2e8f0")
-                    fig_i1.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8",
+                    fig_i1.update_xaxes(gridcolor="#E3E8F0")
+                    fig_i1.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE",
                         title_text=t("Daily Profit (€)","Beneficio Diario (€)"))
                     st.plotly_chart(fig_i1, use_container_width=True)
 
@@ -2170,12 +2236,12 @@ elif seleccion_menu == name_supply:
                         labels={'EurMWh_diario':'€/MWh', 'Day':'', 'MA_str':'MA'},
                         title=t("Daily Intraday Efficiency (€/MWh vs P48)","Eficiencia Intradiaria Diaria (€/MWh vs P48)")
                     )
-                    fig_i2.add_hline(y=0, line_dash="dot", line_color="#94a3b8")
+                    fig_i2.add_hline(y=0, line_dash="dot", line_color="#8B99AE")
                     fig_i2.update_traces(line=dict(width=2), marker=dict(size=4))
                     fig_i2.update_layout(**base_layout(height=370, hovermode='x unified',
                         margin=dict(l=10,r=10,t=45,b=10)))
-                    fig_i2.update_xaxes(gridcolor="#e2e8f0")
-                    fig_i2.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#94a3b8",
+                    fig_i2.update_xaxes(gridcolor="#E3E8F0")
+                    fig_i2.update_yaxes(gridcolor="#E3E8F0", zerolinecolor="#8B99AE",
                         title_text="€/MWh")
                     st.plotly_chart(fig_i2, use_container_width=True)
 
@@ -2308,7 +2374,7 @@ elif seleccion_menu == name_portfolio:
         with st.expander(t("📁 File sources (click to change)",
                            "📁 Fuentes de ficheros (clic para cambiar)"), expanded=False):
             st.markdown(f"""
-            <div style="color:#475569;font-size:0.84rem;margin-bottom:0.8rem;">
+            <div style="color:#46556B;font-size:0.84rem;margin-bottom:0.8rem;">
             {t('Both files are loaded automatically from GCS if configured, or from the repo otherwise. '
                'Upload here only if you want to override.',
                'Ambos ficheros se cargan automáticamente desde GCS si está configurado, o del repo en caso contrario. '
@@ -2424,7 +2490,7 @@ elif seleccion_menu == name_portfolio:
             'Nuclear':          '#f87171',
             'Hydro Pump-Turb':  '#7dd3fc',
             'Storage':          '#c084fc',
-            'Fuel':             '#d97706',
+            'Fuel':             '#C2660E',
         }
 
         # ────────────────────────────────────────────────────────────────────
@@ -2520,7 +2586,7 @@ elif seleccion_menu == name_portfolio:
                         name=tech,
                         x=sub['MA'].astype(str),
                         y=sub['Power MW'],
-                        marker_color=TECH_COLORS.get(tech, '#94a3b8'),
+                        marker_color=TECH_COLORS.get(tech, '#8B99AE'),
                         hovertemplate=f"<b>%{{x}}</b><br>{tech}: %{{y:,.0f}} MW<extra></extra>",
                     ))
                 fig_stack.update_layout(**base_layout(
@@ -2532,8 +2598,8 @@ elif seleccion_menu == name_portfolio:
                     margin=dict(l=10,r=10,t=60,b=10),
                     hovermode='x unified',
                 ))
-                fig_stack.update_xaxes(gridcolor="#e2e8f0", tickangle=-35)
-                fig_stack.update_yaxes(gridcolor="#e2e8f0")
+                fig_stack.update_xaxes(gridcolor="#E3E8F0", tickangle=-35)
+                fig_stack.update_yaxes(gridcolor="#E3E8F0")
                 st.plotly_chart(fig_stack, use_container_width=True)
 
                 # Treemap: toda la generación, MA > Tech > MW
@@ -2626,8 +2692,8 @@ elif seleccion_menu == name_portfolio:
                                     xanchor='right', x=1, font=dict(size=10)),
                         margin=dict(l=10,r=10,t=60,b=10),
                     ))
-                    fig_evo_line.update_xaxes(gridcolor="#e2e8f0")
-                    fig_evo_line.update_yaxes(gridcolor="#e2e8f0")
+                    fig_evo_line.update_xaxes(gridcolor="#E3E8F0")
+                    fig_evo_line.update_yaxes(gridcolor="#E3E8F0")
                     st.plotly_chart(fig_evo_line, use_container_width=True)
 
                     # Heatmap: MA × fecha para la tech seleccionada
@@ -2644,13 +2710,13 @@ elif seleccion_menu == name_portfolio:
                         y=df_hm_evo.index.tolist(),
                         colorscale=[[0,'#dbeafe'],[0.5,'#3b82f6'],[1,'#1e3a8a']],
                         hovertemplate="<b>%{y}</b> · %{x}<br>%{z:,.0f} MW<extra></extra>",
-                        colorbar=dict(title=dict(text="MW", font=dict(color="#475569", size=11)),
-                                      tickfont=dict(color="#475569"), thickness=12, outlinewidth=0),
+                        colorbar=dict(title=dict(text="MW", font=dict(color="#46556B", size=11)),
+                                      tickfont=dict(color="#46556B"), thickness=12, outlinewidth=0),
                     ))
                     fig_hm_evo.update_layout(
                         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                        font=dict(family="Inter", color="#475569"),
-                        title_font=dict(family="Inter", color="#1e293b", size=13),
+                        font=dict(family="Inter", color="#46556B"),
+                        title_font=dict(family="Inter", color="#13233B", size=13),
                         margin=dict(l=10,r=60,t=20,b=40),
                         height=max(280, len(sel_evo_mas)*48 + 80),
                         xaxis=dict(tickangle=-35, tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)"),
@@ -2727,7 +2793,7 @@ elif seleccion_menu == name_portfolio:
                         textinfo='label+percent',
                         textfont=dict(size=11),
                         marker=dict(
-                            colors=[TECH_COLORS.get(tc,'#94a3b8') for tc in tech_pie['Tech']],
+                            colors=[TECH_COLORS.get(tc,'#8B99AE') for tc in tech_pie['Tech']],
                             line=dict(color='white', width=2)),
                         hovertemplate="<b>%{label}</b><br>%{value:,.0f} MW (%{percent})<extra></extra>",
                     ))
@@ -2736,7 +2802,7 @@ elif seleccion_menu == name_portfolio:
                         margin=dict(l=10,r=10,t=20,b=10),
                         annotations=[dict(text=f"<b>{total_mw_ma:,.0f}</b><br>MW",
                                           x=0.5, y=0.5, font_size=14, showarrow=False,
-                                          font=dict(color="#1e293b"))]
+                                          font=dict(color="#13233B"))]
                     ))
                     st.plotly_chart(fig_pie, use_container_width=True)
 
@@ -2761,7 +2827,7 @@ elif seleccion_menu == name_portfolio:
                                     xanchor='right', x=1, font=dict(size=9)),
                         margin=dict(l=10,r=10,t=50,b=10),
                     ))
-                    fig_ups.update_xaxes(gridcolor="#e2e8f0")
+                    fig_ups.update_xaxes(gridcolor="#E3E8F0")
                     fig_ups.update_yaxes(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=9))
                     st.plotly_chart(fig_ups, use_container_width=True)
 
@@ -2805,8 +2871,8 @@ elif seleccion_menu == name_portfolio:
                                     xanchor='right', x=1, font=dict(size=10)),
                         margin=dict(l=10,r=10,t=60,b=10),
                     ))
-                    fig_evo_ma.update_xaxes(gridcolor="#e2e8f0")
-                    fig_evo_ma.update_yaxes(gridcolor="#e2e8f0", title_text="MW")
+                    fig_evo_ma.update_xaxes(gridcolor="#E3E8F0")
+                    fig_evo_ma.update_yaxes(gridcolor="#E3E8F0", title_text="MW")
                     st.plotly_chart(fig_evo_ma, use_container_width=True)
 
     except Exception as e:
