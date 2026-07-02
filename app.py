@@ -15,6 +15,11 @@ from gcs_loader import (
 from unit_explorer import (
     render_unit_explorer, set_loader, set_helpers
 )
+from representantes_explorer import (
+    render_representantes,
+    set_bq as set_rep_bq,
+    set_helpers as set_rep_helpers,
+)
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="⚡")
 
@@ -431,6 +436,12 @@ set_loader(load_parquet)
 set_helpers(metric_card=metric_card, section_header=section_header,
             base_layout=base_layout, t=t)
 
+# Inyección para el Comparador de Ofertas de Representantes (lee de BigQuery).
+# client=None → el módulo crea el cliente desde st.secrets['gcp_service_account'].
+set_rep_bq(client=None, project="miguel-energia", dataset="red_electrica_data")
+set_rep_helpers(metric_card=metric_card, section_header=section_header,
+                base_layout=base_layout, t=t)
+
 cont_nav.header(t("🧭 Navigation", "🧭 Menú de Navegación"))
 name_main    = t("📈 Main Overview", "📈 Resumen Principal")
 name_mra     = t("⚡ MRA Analysis", "⚡ Análisis MRA")
@@ -441,8 +452,9 @@ name_evo     = t("📈 Revenue Evolution", "📈 Evolución Ingresos")
 name_supply   = t("🏪 Retailers (Supply)", "🏪 Comercializadoras (Supply)")
 name_portfolio = t("🗂️ MRA Portfolio", "🗂️ Portfolio MRA")
 name_explorer = t("🔬 Unit Explorer", "🔬 Explorador Unidad")
+name_repofertas = t("🏛️ Agent Offers", "🏛️ Ofertas Representantes")
 
-menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply, name_portfolio, name_explorer]
+menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply, name_portfolio, name_explorer, name_repofertas]
 seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
@@ -2813,5 +2825,12 @@ elif seleccion_menu == name_explorer:
         df_power=df_power,
         default_up='PEVER',
         ma_lookup=ma_lookup,
+    )
+    gc.collect()
+
+elif seleccion_menu == name_repofertas:
+    render_representantes(
+        start_date, end_date,
+        pm_map={"GNERA": "GNE", "AXPO IBERIA": "AXP"},  # ajusta a tus representantes
     )
     gc.collect()
