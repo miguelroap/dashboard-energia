@@ -9,3 +9,5 @@ google-auth-httplib2
 google-api-python-client
 gcsfs
 matplotlib
+google-cloud-bigquery
+db-dtypes
