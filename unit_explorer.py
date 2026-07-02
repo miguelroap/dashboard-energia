@@ -37,23 +37,23 @@ import plotly.graph_objects as go
 # label_es / label_en para la versión bilingüe. color = paleta de la app.
 MARKETS = [
     # key_profit     key_energy      label_es          label_en          color
-    ("Profit_p48",   "Energy_p48",   "Spot (P48)",     "Spot (P48)",     "#2563eb"),
-    ("Profit_rt",    "Energy_rt",    "RRTT F2",        "RRTT F2",        "#0891b2"),
-    ("Profit_tr_s",  "Energy_tr",    "RT5",            "RT5",            "#7c3aed"),
-    ("Profit_t",     "Energy_t",     "Terciaria",      "Tertiary",       "#d97706"),
-    ("Profit_rr",    "Energy_rr",    "RR",             "RR",             "#65a30d"),
-    ("Profit_b",     None,           "Banda Sec.",     "Sec. Band",      "#059669"),
-    ("Profit_se",    "Energy_se",    "Energía Sec.",   "Sec. Energy",    "#ea580c"),
-    ("Profit_i",     "Energy_i",     "Intradiario",    "Intraday",       "#dc2626"),
+    ("Profit_p48",   "Energy_p48",   "Spot (P48)",     "Spot (P48)",     "#1F5EDC"),
+    ("Profit_rt",    "Energy_rt",    "RRTT F2",        "RRTT F2",        "#0E8DA8"),
+    ("Profit_tr_s",  "Energy_tr",    "RT5",            "RT5",            "#6D4AC9"),
+    ("Profit_t",     "Energy_t",     "Terciaria",      "Tertiary",       "#C2660E"),
+    ("Profit_rr",    "Energy_rr",    "RR",             "RR",             "#5F9E0B"),
+    ("Profit_b",     None,           "Banda Sec.",     "Sec. Band",      "#0B9E6D"),
+    ("Profit_se",    "Energy_se",    "Energía Sec.",   "Sec. Energy",    "#E0700F"),
+    ("Profit_i",     "Energy_i",     "Intradiario",    "Intraday",       "#DA3A47"),
 ]
 
 # Mercados de ajuste (excluye spot P48) para totales "AASS".
 AASS_PROFIT_KEYS = ["Profit_rt", "Profit_tr_s", "Profit_t",
                     "Profit_rr", "Profit_b", "Profit_se", "Profit_i"]
 
-C_POS = "#059669"
-C_NEG = "#dc2626"
-C_GRID = "#e2e8f0"
+C_POS = "#0B9E6D"
+C_NEG = "#DA3A47"
+C_GRID = "#E3E8F0"
 
 
 # ==============================================================================
@@ -176,8 +176,8 @@ def _layout(**extra):
     if fn:
         return fn(**extra)
     base = dict(
-        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-        font=dict(family="Inter, sans-serif", color="#475569", size=12),
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+        font=dict(family="Inter, sans-serif", color="#46556B", size=12),
         margin=dict(l=10, r=10, t=45, b=10),
     )
     base.update(extra)
@@ -302,8 +302,8 @@ def render_unit_explorer(start_date, end_date, df_power=None,
         if power_mw:
             sub += f" · {power_mw:,.0f} MW"
         st.markdown(
-            f"<div style='padding-top:1.9rem;color:#64748b;font-size:0.85rem;'>"
-            f"<b style='color:#1e293b;'>{sub}</b> · "
+            f"<div style='padding-top:1.9rem;color:#5B6B84;font-size:0.85rem;'>"
+            f"<b style='color:#13233B;'>{sub}</b> · "
             f"{n_days} {_lang_label('días','days')} · "
             f"{df['Day'].min():%d-%b-%Y} → {df['Day'].max():%d-%b-%Y}</div>",
             unsafe_allow_html=True,
@@ -383,10 +383,10 @@ def _render_waterfall(totals, ebase):
         measure=measures,
         x=labels,
         y=values,
-        connector=dict(line=dict(color="#cbd5e1", width=1)),
+        connector=dict(line=dict(color="#C6CFDC", width=1)),
         decreasing=dict(marker=dict(color=C_NEG)),
         increasing=dict(marker=dict(color=C_POS)),
-        totals=dict(marker=dict(color="#1e293b")),
+        totals=dict(marker=dict(color="#13233B")),
         text=[f"{v:,.0f}" if not show_unit else f"{v:,.2f}"
               for v in values[:-1]] + [""],
         textposition="outside",
@@ -398,7 +398,7 @@ def _render_waterfall(totals, ebase):
         yaxis_title=unit_lbl,
         showlegend=False,
     ))
-    fig.update_yaxes(gridcolor=C_GRID, zerolinecolor="#94a3b8")
+    fig.update_yaxes(gridcolor=C_GRID, zerolinecolor="#8B99AE")
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -483,11 +483,11 @@ def _render_hourly_profile(df):
     fig = go.Figure()
     fig.add_bar(
         x=g["hour"], y=g["energy"], name=_lang_label("Energía media (MWh)", "Avg energy (MWh)"),
-        marker_color="#cbd5e1", yaxis="y2", opacity=0.6,
+        marker_color="#C6CFDC", yaxis="y2", opacity=0.6,
     )
     fig.add_trace(go.Scatter(
         x=g["hour"], y=g["profit"], name=_lang_label("Profit AASS medio (€)", "Avg AASS profit (€)"),
-        mode="lines+markers", line=dict(color="#2563eb", width=2.5),
+        mode="lines+markers", line=dict(color="#1F5EDC", width=2.5),
         marker=dict(size=5),
     ))
     fig.update_layout(**_layout(
