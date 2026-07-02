@@ -1,0 +1,8 @@
+# .streamlit/config.toml — tema nativo de widgets (coherente con el CSS de app.py)
+[theme]
+base = "light"
+primaryColor = "#1F5EDC"
+backgroundColor = "#F4F6F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#13233B"
+font = "sans serif"
