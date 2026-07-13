@@ -1,34 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-representantes_explorer.py — Comparador de ofertas de representantes  (v2)
-==========================================================================
+representantes_explorer.py — Análisis de ofertas de representantes  (v3)
+=========================================================================
 
-Sección drop-in para el dashboard de Servicios de Ajuste, gemela estructural
-de unit_explorer.py (mismos setters de inyección, mismos fallbacks, misma `t`).
+Rediseño centrado en LA CURVA DE OFERTA como objeto de estudio, con tres
+niveles de agregación conmutables sobre las mismas vistas:
 
-Lee DIRECTAMENTE de BigQuery las 11 tablas `i90_diaXX_*offer*_raw`
-(pieza `ofertas-fetch-data`) y ofrece TRES vistas analíticas:
+    Representante  ·  Tecnología  ·  UP
 
-  1. COMPARATIVA   — métricas agregadas del período por representante
-                     (MW, precio ponderado por MW, rango, bloques, cobertura)
-  2. EVOLUCIÓN     — precio ponderado y MW ofertado día a día por representante
-                     (para ver cambios de estrategia en el tiempo)
-  3. CURVA         — forma de la curva por bloques B1→Bn de cada representante
-                     (agresividad del primer bloque, escalado del precio)
+Vistas:
+  1. CURVA DE MÉRITO — precio vs MW acumulado (escalera pay-as-bid real).
+     Cada grupo (rep/tech/UP) apila sus bloques ordenados por precio.
+     Toggle de normalización: MW absolutos o % de capacidad instalada
+     (para comparar agentes de tamaños muy distintos).
+  2. PRECIO POR TECNOLOGÍA — distribución (box) del precio ponderado de
+     cada UP, agrupado por tecnología y coloreado por representante:
+     quién oferta agresivo DENTRO de la misma tecnología.
+  3. TABLA POR UP — una fila por UP: agente, tecnología, capacidad,
+     MW medio ofertado, precio ponderado, rango, cobertura del período
+     y PRIMA vs la mediana de su tecnología (positiva = más caro).
+  4. EVOLUCIÓN — precio ponderado y MW diarios por grupo.
+  5. LECTURA IA — export estructurado para pegar en un chat (patrón B),
+     con hook de API preparado (patrón A).
 
-Novedades v2 respecto a v1:
-  · Muestra el rango de fechas REALMENTE disponible en la tabla (I90 = D+90)
-    y propone por defecto la última semana disponible, no las fechas del sidebar.
-  · Los resultados se guardan en session_state: cambiar de pestaña o tocar un
-    control no borra el análisis; solo el botón "Comparar" recalcula.
-  · Intérprete IA (patrón B: copiar para chat; patrón A: API preparada).
+Datos: tablas BigQuery `i90_diaXX_*offer*_raw` (pieza ofertas-fetch-data)
++ maestro de UPs (programming_units_external_table_latest) para Tech,
+Power_MW y Sujeto del Mercado.
 
-Integración en app.py: idéntica a v1 (import + set_rep_bq + set_rep_helpers +
-entrada de menú + elif final). Ver bloque comentado al final del fichero.
+Mercados de Participante (banda/energía secundaria): la ENTITY es el código
+PM, no la UP, así que los niveles Tecnología/UP no aplican y el módulo
+fuerza nivel Representante con aviso.
 
-Permisos: el SA de st.secrets['gcp_service_account'] necesita
-roles/bigquery.jobUser + roles/bigquery.dataViewer (+ storage.objectViewer
-sobre gs://miguel-energia-programming-units para la external table de UPs).
+Integración en app.py: IDÉNTICA a v2 (set_bq + set_helpers +
+render_representantes). No hay que tocar nada.
 """
 
 import datetime as dt
@@ -39,13 +43,9 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 
-
 # ==============================================================================
 # CATÁLOGO DE MERCADOS
 # ==============================================================================
-# entity:      'UP' → filtra por UPs del SM ; 'PM' → por código Participante I90
-# interleaved: True  → MW y €/MWh en la MISMA tabla y fila (13/15/38)
-#              False → MW y precio en tablas distintas que hay que cruzar
 MARKETS = {
     "rrtt_pdbf_sub": dict(
         label_es="RRTT PDBF · Subir", label_en="RRTT PDBF · Up",
@@ -84,25 +84,21 @@ MARKETS = {
         pr_table="i90_dia38_secondary_energy_offer_raw"),
 }
 
-_SS_KEY = "repofertas_result"   # session_state: resultados persistentes
-
+_SS_KEY = "repofertas_v3"
 
 # ==============================================================================
-# INYECCIÓN DE DEPENDENCIAS  (mismo patrón que unit_explorer.py)
+# INYECCIÓN DE DEPENDENCIAS (idéntica a v2)
 # ==============================================================================
-_BQ = {}
-_HELPERS = {}
+_BQ, _HELPERS = {}, {}
 
 
 def set_bq(client=None, project="miguel-energia", dataset="red_electrica_data"):
-    """Inyecta cliente BQ y dataset. Con client=None se crea desde st.secrets."""
     _BQ["client"] = client
     _BQ["project"] = project
     _BQ["dataset"] = dataset
 
 
 def set_helpers(metric_card=None, section_header=None, base_layout=None, t=None):
-    """Inyecta los helpers visuales de app.py (opcional: hay fallbacks)."""
     if metric_card:     _HELPERS["metric_card"] = metric_card
     if section_header:  _HELPERS["section_header"] = section_header
     if base_layout:     _HELPERS["base_layout"] = base_layout
@@ -122,24 +118,14 @@ def _section(icon, title):
         st.markdown(f"### {icon} {title}")
 
 
-def _metric(label, value, unit="", positive=None, delta=None):
-    fn = _HELPERS.get("metric_card")
-    if fn:
-        st.markdown(fn(label, value, delta=delta, positive=positive, unit=unit),
-                    unsafe_allow_html=True)
-    else:
-        st.metric(label, f"{value}{unit}", delta=delta)
-
-
 def _layout(**extra):
     fn = _HELPERS.get("base_layout")
     if fn:
         return fn(**extra)
-    base = dict(
-        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
-        font=dict(family="Inter, sans-serif", color="#46556B", size=12),
-        margin=dict(l=10, r=10, t=45, b=10),
-    )
+    base = dict(template="plotly_white", paper_bgcolor="#ffffff",
+                plot_bgcolor="#FBFCFE",
+                font=dict(family="Inter, sans-serif", color="#46556B", size=12),
+                margin=dict(l=10, r=10, t=45, b=10))
     base.update(extra)
     return base
 
@@ -149,7 +135,7 @@ def _mkt_label(mkt):
 
 
 # ==============================================================================
-# CLIENTE BIGQUERY
+# BIGQUERY
 # ==============================================================================
 @st.cache_resource(show_spinner=False)
 def _build_bq_client(project):
@@ -162,10 +148,9 @@ def _build_bq_client(project):
 
 def _client():
     c = _BQ.get("client")
-    if c is not None:
-        return c
-    c = _build_bq_client(_BQ.get("project", "miguel-energia"))
-    _BQ["client"] = c
+    if c is None:
+        c = _build_bq_client(_BQ.get("project", "miguel-energia"))
+        _BQ["client"] = c
     return c
 
 
@@ -176,9 +161,6 @@ def _qp(d_ini, d_fin):
         bigquery.ScalarQueryParameter("d_fin", "DATE", d_fin)])
 
 
-# ==============================================================================
-# MAESTRO DE UPs Y DISPONIBILIDAD DE DATOS
-# ==============================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_up_master():
     project, dataset = _BQ["project"], _BQ["dataset"]
@@ -188,12 +170,13 @@ def _load_up_master():
                Sujeto_del_Mercado_2 AS SM2, RZ
         FROM `{project}.{dataset}.programming_units_external_table_latest`
     """
-    return _client().query(sql).to_dataframe()
+    df = _client().query(sql).to_dataframe()
+    df["Power_MW"] = pd.to_numeric(df["Power_MW"], errors="coerce")
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _data_availability(table):
-    """Rango de fechas con datos en la tabla (solo lee la columna de partición)."""
     project, dataset = _BQ["project"], _BQ["dataset"]
     sql = f"""SELECT MIN(DELIVERY_DATE_DAY_CET) AS dmin,
                      MAX(DELIVERY_DATE_DAY_CET) AS dmax
@@ -201,14 +184,12 @@ def _data_availability(table):
     df = _client().query(sql).to_dataframe()
     if df.empty or pd.isna(df.loc[0, "dmax"]):
         return None, None
-    return pd.to_datetime(df.loc[0, "dmin"]).date(), pd.to_datetime(df.loc[0, "dmax"]).date()
+    return (pd.to_datetime(df.loc[0, "dmin"]).date(),
+            pd.to_datetime(df.loc[0, "dmax"]).date())
 
 
-# ==============================================================================
-# QUERIES  (agregación en BQ; solo bajan filas ya agregadas)
-# ==============================================================================
 def _q_blocks(mkt, entities, d_ini, d_fin):
-    """Agregado del período por (ENTITY, BLOCK): MW total y precio."""
+    """Agregado del período por (ENTITY, BLOCK)."""
     project, dataset = _BQ["project"], _BQ["dataset"]
     ent_list = ",".join(f"'{e}'" for e in entities)
     if mkt["interleaved"]:
@@ -248,7 +229,6 @@ def _q_blocks(mkt, entities, d_ini, d_fin):
 
 
 def _q_evolution(mkt, entities, d_ini, d_fin):
-    """Serie diaria por ENTITY: MW total y precio (pond. si interleaved)."""
     project, dataset = _BQ["project"], _BQ["dataset"]
     ent_list = ",".join(f"'{e}'" for e in entities)
     if mkt["interleaved"]:
@@ -280,56 +260,79 @@ def _q_evolution(mkt, entities, d_ini, d_fin):
     return _client().query(sql, job_config=_qp(d_ini, d_fin)).to_dataframe()
 
 
-def _dry_run_gb(mkt, entities, d_ini, d_fin):
-    from google.cloud import bigquery
-    project, dataset = _BQ["project"], _BQ["dataset"]
-    ent_list = ",".join(f"'{e}'" for e in entities) or "''"
-    sql = f"""SELECT ENTITY FROM `{project}.{dataset}.{mkt['mw_table']}`
-              WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
-                AND ENTITY IN ({ent_list})"""
-    cfg = bigquery.QueryJobConfig(
-        dry_run=True, use_query_cache=False,
-        query_parameters=_qp(d_ini, d_fin).query_parameters)
-    return _client().query(sql, job_config=cfg).total_bytes_processed / (1024 ** 3)
-
-
 # ==============================================================================
-# AGREGACIONES EN PANDAS  (mapear ENTITY→representante y consolidar)
+# TRANSFORMACIONES (puras: testables sin Streamlit)
 # ==============================================================================
-def _wavg(g, val, w):
-    """Media de `val` ponderada por `w`, tolerante a NaN y peso cero."""
-    v = g.dropna(subset=[val])
-    tw = v[w].sum()
-    if tw and tw > 0:
-        return float((v[val] * v[w]).sum() / tw)
-    return float(v[val].mean()) if not v.empty else None
-
-
-def _rep_metrics(df_blocks, entity_to_rep):
-    """Una fila por representante: métricas agregadas del período."""
+def enrich_blocks(df_blocks, master, entity_kind):
+    """Añade SM, Tech, Power_MW y mw_avg (MW medio por QH) a cada bloque."""
     if df_blocks is None or df_blocks.empty:
         return pd.DataFrame()
     df = df_blocks.copy()
-    df["rep"] = df["ENTITY"].map(entity_to_rep).fillna(df["ENTITY"])
+    df["mw_avg"] = df["mw_sum"] / df["qh_count"].replace(0, pd.NA)
+    if entity_kind == "UP":
+        m = master[["UP", "SM", "Tech", "Power_MW"]].drop_duplicates("UP")
+        df = df.merge(m, left_on="ENTITY", right_on="UP", how="left")
+        df["SM"] = df["SM"].fillna(df["ENTITY"])
+        df["Tech"] = df["Tech"].fillna("(sin tech)")
+    else:  # PM: ENTITY es el código de participante; sin desglose UP/Tech
+        df["UP"] = df["ENTITY"]
+        df["SM"] = df["ENTITY"]
+        df["Tech"] = "(PM)"
+        df["Power_MW"] = pd.NA
+    return df
+
+
+def up_metrics(dfb, period_days):
+    """Una fila por UP: precio pond., MW medio, cobertura, prima vs tech."""
+    if dfb.empty:
+        return pd.DataFrame()
     rows = []
-    for rep, g in df.groupby("rep"):
+    for up, g in dfb.groupby("UP"):
+        v = g.dropna(subset=["pr_w"])
+        wsum = v["mw_sum"].sum()
+        pr = float((v["pr_w"] * v["mw_sum"]).sum() / wsum) if wsum > 0 else (
+            float(v["pr_w"].mean()) if not v.empty else None)
+        qh_offer = int(g["qh_count"].max())          # bloque 1 ≈ QH con oferta
         rows.append(dict(
-            rep=rep,
-            mw=round(float(g["mw_sum"].sum()), 1),
-            pr_w=_wavg(g, "pr_w", "mw_sum"),
+            UP=up, SM=g["SM"].iloc[0], Tech=g["Tech"].iloc[0],
+            Power_MW=float(g["Power_MW"].iloc[0]) if pd.notna(g["Power_MW"].iloc[0]) else None,
+            mw_avg=float(g["mw_avg"].sum()) if g["mw_avg"].notna().any() else 0.0,
+            pr_w=pr,
             pr_min=float(g["pr_min"].min()) if g["pr_min"].notna().any() else None,
             pr_max=float(g["pr_max"].max()) if g["pr_max"].notna().any() else None,
-            blocks=round(float(g.groupby("ENTITY")["BLOCK"].nunique().mean()), 1),
-            n_ent=int(g["ENTITY"].nunique()),
-            qh=int(g["qh_count"].sum()),
-            days=int(g["days"].max()),
+            blocks=int(g["BLOCK"].nunique()),
+            cobertura=min(1.0, qh_offer / max(1, period_days * 96)),
         ))
-    return pd.DataFrame(rows).sort_values("mw", ascending=False).reset_index(drop=True)
+    out = pd.DataFrame(rows)
+    # prima vs mediana de su tecnología (entre TODO lo seleccionado)
+    med = out.groupby("Tech")["pr_w"].transform("median")
+    out["prima_tech"] = out["pr_w"] - med
+    return out.sort_values("mw_avg", ascending=False).reset_index(drop=True)
+
+
+def merit_curve(dfb, level):
+    """Puntos de curva de mérito por grupo: bloques ordenados por precio,
+    MW medio acumulado. level ∈ {'SM','Tech','UP'}."""
+    if dfb.empty:
+        return pd.DataFrame()
+    d = dfb.dropna(subset=["pr_w", "mw_avg"]).copy()
+    parts = []
+    for grp, g in d.groupby(level):
+        g = g.sort_values("pr_w")
+        cum = g["mw_avg"].cumsum()
+        parts.append(pd.DataFrame({
+            "grupo": grp, "mw_cum": cum.values, "precio": g["pr_w"].values}))
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+def group_capacity(dfb, level):
+    """Capacidad instalada (Σ Power_MW de UPs únicas) por grupo."""
+    caps = (dfb[[level, "UP", "Power_MW"]].drop_duplicates(["UP"])
+            .groupby(level)["Power_MW"].sum(min_count=1))
+    return caps.to_dict()
 
 
 def _wgroup(df, keys):
-    """Agrega por `keys`: mw = Σ mw_sum; pr_w = media ponderada por mw_sum.
-    Vectorizado (sin groupby.apply) para compatibilidad con cualquier pandas."""
     mw = df.groupby(keys)["mw_sum"].sum().rename("mw")
     v = df.dropna(subset=["pr_w"]).copy()
     if v.empty:
@@ -343,86 +346,69 @@ def _wgroup(df, keys):
     return pd.concat([mw, pr], axis=1).reset_index()
 
 
-def _rep_evolution(df_evo, entity_to_rep):
-    """Serie diaria por representante: MW y precio ponderado por MW."""
+def evolution_by_level(df_evo, ent_meta, level):
+    """Serie diaria agregada al nivel elegido."""
     if df_evo is None or df_evo.empty:
         return pd.DataFrame()
-    df = df_evo.copy()
-    df["rep"] = df["ENTITY"].map(entity_to_rep).fillna(df["ENTITY"])
-    out = _wgroup(df, ["d", "rep"])
+    df = df_evo.merge(ent_meta, left_on="ENTITY", right_on="UP", how="left")
+    df["SM"] = df["SM"].fillna(df["ENTITY"])
+    df["Tech"] = df["Tech"].fillna("(sin tech)")
+    if "UP" not in df.columns or df["UP"].isna().all():
+        df["UP"] = df["ENTITY"]
+    df["UP"] = df["UP"].fillna(df["ENTITY"])
+    out = _wgroup(df, ["d", level]).rename(columns={level: "grupo"})
     out["d"] = pd.to_datetime(out["d"])
     return out.sort_values("d")
-
-
-def _rep_curve(df_blocks, entity_to_rep):
-    """Forma de curva: por representante y bloque, MW y precio ponderado."""
-    if df_blocks is None or df_blocks.empty:
-        return pd.DataFrame()
-    df = df_blocks.copy()
-    df["rep"] = df["ENTITY"].map(entity_to_rep).fillna(df["ENTITY"])
-    return _wgroup(df, ["rep", "BLOCK"]).sort_values(["rep", "BLOCK"])
 
 
 # ==============================================================================
 # PAYLOAD IA
 # ==============================================================================
-def _build_payload(metrics, curve, mkt, d_ini, d_fin, reps_sel):
-    tabla = metrics.rename(columns={
-        "rep": "representante", "mw": "MW_ofertado_total",
-        "pr_w": f"precio_pond_{mkt['price_unit']}",
-        "pr_min": "precio_min", "pr_max": "precio_max",
-        "blocks": "n_bloques_medio", "n_ent": "n_entidades",
-        "qh": "qh_con_oferta", "days": "dias_con_datos",
-    }).round(2).to_dict(orient="records")
-    curva = (curve.round(2).rename(columns={"rep": "representante", "BLOCK": "bloque",
-                                            "mw": "MW", "pr_w": "precio_pond"})
-                  .to_dict(orient="records")) if not curve.empty else []
+def _build_payload(ups, mkt, d_ini, d_fin, reps_sel):
+    tabla = (ups.round(2)
+             .rename(columns={"mw_avg": "MW_medio", "pr_w": "precio_pond",
+                              "prima_tech": "prima_vs_mediana_tech",
+                              "cobertura": "cobertura_periodo"})
+             .to_dict(orient="records"))
     return {
-        "mercado": mkt["label_es"],
-        "unidad_precio": mkt["price_unit"],
+        "mercado": mkt["label_es"], "unidad_precio": mkt["price_unit"],
         "periodo": {"inicio": str(d_ini), "fin": str(d_fin)},
         "representantes": list(reps_sel),
-        "nota": ("Precios ponderados por MW ofertado (no media simple). "
-                 "La curva por bloques muestra la escalera B1→Bn de cada agente."),
-        "resumen_por_representante": tabla,
-        "curva_por_bloques": curva,
+        "nota": ("precio_pond = €/MWh ponderado por MW. MW_medio = MW medios "
+                 "ofertados por QH. prima_vs_mediana_tech = cuánto más caro (+) "
+                 "o barato (−) oferta esa UP que la mediana de su tecnología. "
+                 "cobertura_periodo = fracción de cuartos de hora con oferta."),
+        "tabla_por_UP": tabla,
     }
 
 
 def _payload_md(p):
-    md = ["# Comparación de ofertas de representantes",
+    md = ["# Ofertas de representantes — análisis por UP",
           f"**Mercado:** {p['mercado']} · **Período:** "
           f"{p['periodo']['inicio']} → {p['periodo']['fin']} · "
-          f"**Precio en:** {p['unidad_precio']}", "",
-          f"_{p['nota']}_", "", "## Resumen por representante"]
-
-    def _table(rows):
-        if not rows:
-            return ["(sin datos)"]
+          f"**Precio en:** {p['unidad_precio']}", "", f"_{p['nota']}_", ""]
+    rows = p["tabla_por_UP"]
+    if rows:
         cols = list(rows[0].keys())
-        out = ["| " + " | ".join(cols) + " |",
-               "| " + " | ".join("---" for _ in cols) + " |"]
-        out += ["| " + " | ".join(str(r.get(c, "")) for c in cols) + " |" for r in rows]
-        return out
-
-    md += _table(p["resumen_por_representante"])
-    md += ["", "## Curva por bloques (escalera de oferta)"]
-    md += _table(p["curva_por_bloques"])
+        md.append("| " + " | ".join(cols) + " |")
+        md.append("| " + " | ".join("---" for _ in cols) + " |")
+        md += ["| " + " | ".join(str(r.get(c, "")) for c in cols) + " |" for r in rows]
     md.append("")
     md.append(dedent("""\
         ---
-        **Pregunta:** Interpreta esta comparación de ofertas del mercado de
-        balancing español:
-        1. ¿Quién oferta más agresivo en precio y quién más conservador?
-        2. ¿Alguien pone mucha capacidad a precio alto, o poca a precio bajo?
-        3. ¿Qué dice la forma de la escalera B1→Bn de la estrategia de cada uno
-           (primer bloque barato para asegurar casación vs escalera plana)?
-        4. Señales de poder de mercado o de zona de regulación poco competida.
+        **Pregunta:** Con esta tabla por UP del mercado de balancing español:
+        1. ¿Qué UPs ofertan sistemáticamente por encima de su tecnología
+           (prima positiva alta) y qué puede explicarlo (zona, tamaño, agente)?
+        2. ¿Qué representantes son agresivos en unas tecnologías y
+           conservadores en otras?
+        3. ¿La cobertura del período sugiere estrategias de disponibilidad
+           distintas entre agentes?
+        4. Señales de poder de mercado o zonas poco competidas.
         5. Qué mirarías después para confirmar cada hipótesis."""))
     return "\n".join(md)
 
 
-# === API HOOK ===  patrón A (requiere `anthropic` + ANTHROPIC_API_KEY)
+# === API HOOK === (patrón A)
 def _call_claude(payload):
     import anthropic
     client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
@@ -435,306 +421,268 @@ def _call_claude(payload):
 # ==============================================================================
 # GRÁFICOS
 # ==============================================================================
-def _fig_scatter(m, mkt):
-    if m.empty or m["pr_w"].isna().all():
+def _fig_merit(curve, mkt, caps=None, normalize=False):
+    if curve.empty:
         return None
-    fig = px.scatter(m, x="mw", y="pr_w", text="rep", size="n_ent", color="rep",
-                     labels={"mw": _t("MW offered (Σ)", "MW ofertado (Σ)"),
-                             "pr_w": f"{_t('W.avg price', 'Precio pond.')} ({mkt['price_unit']})"})
-    fig.update_traces(textposition="top center")
-    fig.update_layout(**_layout(height=420, showlegend=False,
-                                title=_t("Competitive map", "Mapa competitivo")))
+    fig = go.Figure()
+    for grp, g in curve.groupby("grupo"):
+        x = g["mw_cum"]
+        xlab = "MW acumulados"
+        if normalize and caps and caps.get(grp) and caps[grp] > 0:
+            x = 100 * g["mw_cum"] / caps[grp]
+            xlab = _t("% of installed capacity", "% de capacidad instalada")
+        fig.add_scatter(x=[0] + list(x), y=[g["precio"].iloc[0]] + list(g["precio"]),
+                        mode="lines+markers", name=str(grp),
+                        line_shape="hv", marker=dict(size=5))
+    fig.update_layout(**_layout(
+        height=480,
+        title=_t("Merit-order offer curve", "Curva de mérito de la oferta")
+              + f" — {_mkt_label(mkt)}",
+        xaxis_title=xlab if not curve.empty else "MW",
+        yaxis_title=mkt["price_unit"],
+        legend=dict(orientation="h", y=1.1)))
     return fig
 
 
-def _fig_bars(m, mkt):
-    if m.empty:
+def _fig_tech_box(ups, mkt):
+    d = ups.dropna(subset=["pr_w"])
+    if d.empty:
         return None
-    fig = go.Figure()
-    fig.add_bar(x=m["rep"], y=m["mw"],
-                name=_t("MW offered (Σ)", "MW ofertado (Σ)"), marker_color="#1F5EDC")
-    if m["pr_w"].notna().any():
-        fig.add_scatter(x=m["rep"], y=m["pr_w"], yaxis="y2", mode="markers+lines",
-                        name=f"{_t('W.avg price', 'Precio pond.')} ({mkt['price_unit']})",
-                        marker=dict(size=11), line=dict(color="#C2660E"))
+    fig = px.box(d, x="Tech", y="pr_w", color="SM", points="all",
+                 hover_data=["UP", "mw_avg"],
+                 labels={"pr_w": mkt["price_unit"], "Tech": "", "SM": ""})
     fig.update_layout(**_layout(
-        height=420, title=_t("MW vs price", "MW vs precio"),
-        yaxis=dict(title="MW"),
-        yaxis2=dict(title=mkt["price_unit"], overlaying="y", side="right", showgrid=False),
+        height=460,
+        title=_t("UP weighted price by technology and agent",
+                 "Precio ponderado de cada UP por tecnología y agente"),
+        legend=dict(orientation="h", y=1.1)))
+    return fig
+
+
+def _fig_evo(evo, mkt, what="pr_w"):
+    if evo.empty or evo[what].isna().all():
+        return None
+    fig = px.line(evo, x="d", y=what, color="grupo", markers=True,
+                  labels={"d": "", "grupo": "",
+                          what: mkt["price_unit"] if what == "pr_w" else "MW"})
+    fig.update_layout(**_layout(
+        height=400,
+        title=(_t("Daily weighted price", "Precio ponderado diario")
+               if what == "pr_w" else _t("Daily offered MW", "MW ofertados diarios")),
         legend=dict(orientation="h", y=1.12)))
     return fig
 
 
-def _fig_evo_price(evo, mkt):
-    if evo.empty or evo["pr_w"].isna().all():
-        return None
-    fig = px.line(evo, x="d", y="pr_w", color="rep", markers=True,
-                  labels={"d": "", "pr_w": mkt["price_unit"], "rep": ""})
-    fig.update_layout(**_layout(height=400,
-                                title=_t("Daily weighted price", "Precio ponderado diario"),
-                                legend=dict(orientation="h", y=1.12)))
-    return fig
-
-
-def _fig_evo_mw(evo):
-    if evo.empty:
-        return None
-    fig = px.line(evo, x="d", y="mw", color="rep", markers=True,
-                  labels={"d": "", "mw": "MW", "rep": ""})
-    fig.update_layout(**_layout(height=400,
-                                title=_t("Daily MW offered", "MW ofertado diario"),
-                                legend=dict(orientation="h", y=1.12)))
-    return fig
-
-
-def _fig_curve_price(curve, mkt):
-    if curve.empty or curve["pr_w"].isna().all():
-        return None
-    fig = px.line(curve, x="BLOCK", y="pr_w", color="rep", markers=True,
-                  labels={"BLOCK": _t("Block", "Bloque"),
-                          "pr_w": mkt["price_unit"], "rep": ""})
-    fig.update_xaxes(dtick=1)
-    fig.update_layout(**_layout(height=400,
-                                title=_t("Price ladder B1→Bn", "Escalera de precio B1→Bn"),
-                                legend=dict(orientation="h", y=1.12)))
-    return fig
-
-
-def _fig_curve_mw(curve):
-    if curve.empty:
-        return None
-    fig = px.bar(curve, x="BLOCK", y="mw", color="rep", barmode="group",
-                 labels={"BLOCK": _t("Block", "Bloque"), "mw": "MW", "rep": ""})
-    fig.update_xaxes(dtick=1)
-    fig.update_layout(**_layout(height=400,
-                                title=_t("MW per block", "MW por bloque"),
-                                legend=dict(orientation="h", y=1.12)))
-    return fig
-
-
 # ==============================================================================
-# RENDER PRINCIPAL
+# RENDER
 # ==============================================================================
 def render_representantes(start_date=None, end_date=None, pm_map=None):
-    """
-    Pinta la sección de comparación de ofertas de representantes.
-
-    start_date/end_date se ignoran a efectos de valor por defecto si quedan
-    fuera del rango con datos (I90 = D+90): el módulo propone la última semana
-    realmente disponible en la tabla del mercado elegido.
-    pm_map : dict {SM: codigo_PM_I90} — solo para banda/energía secundaria.
-    """
-    _section("🏛️", _t("Agent Offers Comparison", "Comparador de Ofertas de Representantes"))
+    _section("🏛️", _t("Agent Offers Analysis", "Análisis de Ofertas de Representantes"))
     st.caption(_t(
-        "Pay-as-bid offer curves from BigQuery. Three views: period comparison, "
-        "daily evolution, and B1→Bn curve shape per agent.",
-        "Curvas de oferta pay-as-bid desde BigQuery. Tres vistas: comparativa del "
-        "período, evolución diaria y forma de curva B1→Bn por representante."))
+        "The offer curve is the object of study: merit-order view, per-technology "
+        "price distributions and a per-UP table, switchable across three levels.",
+        "La curva de oferta es el objeto de estudio: curva de mérito, distribución "
+        "de precios por tecnología y tabla por UP, conmutables en tres niveles."))
 
-    # ── Maestro de UPs ────────────────────────────────────────────────
     try:
         master = _load_up_master()
     except Exception as e:
-        st.error(_t("Could not load UP master from BigQuery: ",
-                    "No se pudo cargar el maestro de UPs desde BigQuery: ") + str(e))
+        st.error(_t("Could not load UP master: ", "No se pudo cargar el maestro: ") + str(e))
         return
     sm_options = sorted(master["SM"].dropna().unique().tolist())
 
-    # ── Controles ─────────────────────────────────────────────────────
+    # ── Controles ────────────────────────────────────────────────────
     c1, c2 = st.columns([2, 1])
     with c1:
         reps_sel = st.multiselect(
-            _t("Agents to compare", "Representantes a comparar"), sm_options,
-            default=sm_options[:3] if len(sm_options) >= 3 else sm_options,
-            key="rep_sel")
+            _t("Agents", "Representantes"), sm_options,
+            default=sm_options[:2] if len(sm_options) >= 2 else sm_options,
+            key="r3_sel")
     with c2:
         mkt_key = st.selectbox(_t("Market", "Mercado"), list(MARKETS.keys()),
                                format_func=lambda k: _mkt_label(MARKETS[k]),
-                               key="rep_mkt")
+                               key="r3_mkt")
     mkt = MARKETS[mkt_key]
+    is_pm = mkt["entity"] == "PM"
 
-    # ── Disponibilidad real de datos (I90 = D+90) ────────────────────
     try:
         dmin, dmax = _data_availability(mkt["mw_table"])
     except Exception as e:
-        st.error(_t("Could not check data availability: ",
-                    "No se pudo comprobar la disponibilidad de datos: ") + str(e))
+        st.error(str(e))
         return
     if dmax is None:
-        st.warning(_t("This market's table is empty in BigQuery.",
-                      "La tabla de este mercado está vacía en BigQuery."))
+        st.warning(_t("Empty table for this market.", "Tabla vacía para este mercado."))
         return
-    st.info(_t(f"📅 Data available: **{dmin} → {dmax}** (I90 is published at D+90).",
-               f"📅 Datos disponibles: **{dmin} → {dmax}** (los I90 se publican a D+90)."))
+    st.info(f"📅 {_t('Data available', 'Datos disponibles')}: **{dmin} → {dmax}** (I90 = D+90)")
 
-    # Fechas por defecto: última semana DISPONIBLE (no el rango del sidebar)
-    def_fin = dmax
-    def_ini = max(dmin, dmax - dt.timedelta(days=6))
-    c3, c4 = st.columns(2)
+    c3, c4, c5 = st.columns([1, 1, 1])
     with c3:
-        d_ini = st.date_input(_t("From", "Desde"), value=def_ini,
-                              min_value=dmin, max_value=dmax,
-                              key=f"rep_dini_{mkt_key}")
+        d_ini = st.date_input(_t("From", "Desde"), value=max(dmin, dmax - dt.timedelta(days=6)),
+                              min_value=dmin, max_value=dmax, key=f"r3_dini_{mkt_key}")
     with c4:
-        d_fin = st.date_input(_t("To", "Hasta"), value=def_fin,
-                              min_value=dmin, max_value=dmax,
-                              key=f"rep_dfin_{mkt_key}")
+        d_fin = st.date_input(_t("To", "Hasta"), value=dmax,
+                              min_value=dmin, max_value=dmax, key=f"r3_dfin_{mkt_key}")
+    with c5:
+        if is_pm:
+            level = "SM"
+            st.selectbox(_t("Level", "Nivel"), [_t("Agent", "Representante")],
+                         key="r3_lvl_pm", disabled=True,
+                         help=_t("Participant markets have no UP/Tech breakdown.",
+                                 "Los mercados de Participante no desglosan por UP/Tecnología."))
+        else:
+            lvl_map = {_t("Agent", "Representante"): "SM",
+                       _t("Technology", "Tecnología"): "Tech", "UP": "UP"}
+            level = lvl_map[st.selectbox(_t("Level", "Nivel"), list(lvl_map.keys()),
+                                         key="r3_lvl")]
+
+    # filtro de tecnología (solo mercados UP)
+    tech_sel = None
+    if not is_pm:
+        techs = sorted(master.loc[master["SM"].isin(reps_sel), "Tech"]
+                       .dropna().unique().tolist())
+        tech_sel = st.multiselect(_t("Technologies (empty = all)",
+                                     "Tecnologías (vacío = todas)"),
+                                  techs, default=[], key="r3_tech")
 
     if not reps_sel:
         st.info(_t("Select at least one agent.", "Selecciona al menos un representante."))
         return
     if d_ini > d_fin:
-        st.error(_t("Date range is inverted.", "El rango de fechas está invertido."))
+        st.error(_t("Inverted date range.", "Rango de fechas invertido."))
         return
 
-    # ── Resolver entidades por representante ─────────────────────────
-    entity_to_rep, entities = {}, []
-    if mkt["entity"] == "UP":
+    # ── Resolver entidades ───────────────────────────────────────────
+    if not is_pm:
         sub = master[master["SM"].isin(reps_sel)]
-        for _, r in sub.iterrows():
-            if pd.notna(r["UP"]):
-                entity_to_rep[r["UP"]] = r["SM"]
-                entities.append(r["UP"])
+        if tech_sel:
+            sub = sub[sub["Tech"].isin(tech_sel)]
+        entities = sorted(sub["UP"].dropna().unique().tolist())
     else:
-        if not pm_map:
-            st.warning(_t(
-                "Market-Participant market: provide pm_map (e.g. GNERA→GNE). "
-                "Falling back to SM2 (likely wrong).",
-                "Mercado de Participante: pasa pm_map (p.ej. GNERA→GNE). "
-                "De momento uso el SM2 (probablemente incorrecto)."))
+        entities = []
         for sm in reps_sel:
             code = (pm_map or {}).get(sm)
             if not code:
                 sm2s = master.loc[master["SM"] == sm, "SM2"].dropna()
                 code = sm2s.mode().iloc[0] if not sm2s.empty else sm
-            entity_to_rep[code] = sm
             entities.append(code)
-    entities = sorted(set(entities))
+        entities = sorted(set(entities))
+        if not pm_map:
+            st.warning(_t("PM market without pm_map: using SM2 (may be wrong).",
+                          "Mercado PM sin pm_map: uso SM2 (puede no casar)."))
     if not entities:
-        st.error(_t("No entities found for selection.",
-                    "Ningún representante seleccionado tiene entidades."))
+        st.error(_t("No entities for that selection.", "Sin entidades para esa selección."))
         return
 
-    # ── Coste + botón ─────────────────────────────────────────────────
-    with st.expander(_t("Estimated query cost (dry-run)",
-                        "Coste estimado de la consulta (dry-run)")):
-        try:
-            gb = _dry_run_gb(mkt, entities, d_ini, d_fin)
-            st.write(f"**{gb:.3f} GB** (~{gb*6.25:.4f} € "
-                     + _t("beyond free TB", "fuera del TB gratis mensual") + ")")
-        except Exception as e:
-            st.caption(str(e))
-
-    if st.button(_t("Compare offers", "Comparar ofertas"), type="primary"):
-        with st.spinner(_t("Querying BigQuery…", "Consultando BigQuery…")):
+    if st.button(_t("Analyze offers", "Analizar ofertas"), type="primary"):
+        with st.spinner("BigQuery…"):
             try:
-                df_blocks = _q_blocks(mkt, entities, d_ini, d_fin)
-                df_evo = _q_evolution(mkt, entities, d_ini, d_fin)
+                dfb_raw = _q_blocks(mkt, entities, d_ini, d_fin)
+                dfe_raw = _q_evolution(mkt, entities, d_ini, d_fin)
             except Exception as e:
                 st.error(str(e))
                 return
         st.session_state[_SS_KEY] = dict(
-            mkt_key=mkt_key, reps=list(reps_sel),
+            mkt_key=mkt_key, reps=list(reps_sel), tech=list(tech_sel or []),
             d_ini=str(d_ini), d_fin=str(d_fin),
-            metrics=_rep_metrics(df_blocks, entity_to_rep),
-            evo=_rep_evolution(df_evo, entity_to_rep),
-            curve=_rep_curve(df_blocks, entity_to_rep))
+            dfb=dfb_raw, dfe=dfe_raw)
 
     res = st.session_state.get(_SS_KEY)
     if not res:
         return
-    if res["mkt_key"] != mkt_key or res["reps"] != list(reps_sel) \
-            or res["d_ini"] != str(d_ini) or res["d_fin"] != str(d_fin):
-        st.caption(_t("⚠️ Showing previous results — press *Compare offers* to refresh.",
-                      "⚠️ Mostrando resultados anteriores — pulsa *Comparar ofertas* para refrescar."))
+    if (res["mkt_key"], res["reps"], res["d_ini"], res["d_fin"], res["tech"]) != \
+       (mkt_key, list(reps_sel), str(d_ini), str(d_fin), list(tech_sel or [])):
+        st.caption(_t("⚠️ Showing previous run — press *Analyze offers* to refresh.",
+                      "⚠️ Mostrando la ejecución anterior — pulsa *Analizar ofertas* para refrescar."))
 
-    metrics, evo, curve = res["metrics"], res["evo"], res["curve"]
     r_mkt = MARKETS[res["mkt_key"]]
-
-    if metrics.empty:
+    dfb = enrich_blocks(res["dfb"], master, r_mkt["entity"])
+    if dfb.empty:
         st.warning(_t("No offer data for that selection/period.",
                       "Sin datos de oferta para esa selección y período."))
         return
-
-    # ── KPIs de cabecera ──────────────────────────────────────────────
-    k = st.columns(min(4, len(metrics)) or 1)
-    for i, (_, row) in enumerate(metrics.head(4).iterrows()):
-        with k[i]:
-            pr_txt = f"{row['pr_w']:.1f}" if pd.notna(row["pr_w"]) else "—"
-            _metric(row["rep"], pr_txt, unit=f" {r_mkt['price_unit']}",
-                    delta=f"{row['mw']:,.0f} MW · {row['n_ent']} UPs")
+    period_days = (pd.to_datetime(res["d_fin"]) - pd.to_datetime(res["d_ini"])).days + 1
+    ups = up_metrics(dfb, period_days)
 
     # ── Vistas ────────────────────────────────────────────────────────
-    tab_cmp, tab_evo, tab_curve, tab_ai = st.tabs([
-        _t("📊 Comparison", "📊 Comparativa"),
+    tab_merit, tab_tech, tab_ups, tab_evo, tab_ai = st.tabs([
+        _t("⚡ Merit curve", "⚡ Curva de mérito"),
+        _t("🔬 By technology", "🔬 Por tecnología"),
+        _t("📋 Per UP", "📋 Por UP"),
         _t("📈 Evolution", "📈 Evolución"),
-        _t("🪜 Curve shape", "🪜 Curva por bloques"),
         _t("🤖 AI reading", "🤖 Lectura IA")])
 
-    with tab_cmp:
-        show = metrics.rename(columns={
-            "rep": _t("Agent", "Representante"),
-            "mw": _t("MW offered (Σ)", "MW ofertado (Σ)"),
-            "pr_w": f"{_t('W.avg price', 'Precio pond.')} ({r_mkt['price_unit']})",
-            "pr_min": _t("Min", "Mín"), "pr_max": _t("Max", "Máx"),
-            "blocks": _t("Blocks (avg)", "Bloques (medio)"),
-            "n_ent": _t("Entities", "Entidades"),
-            "qh": _t("QH offered", "QH con oferta"),
-            "days": _t("Days", "Días")}).round(2)
-        st.dataframe(show, use_container_width=True, hide_index=True)
-        g1, g2 = st.columns(2)
-        with g1:
-            f = _fig_scatter(metrics, r_mkt)
-            st.plotly_chart(f, use_container_width=True) if f else \
-                st.caption(_t("No price data.", "Sin datos de precio."))
-        with g2:
-            f = _fig_bars(metrics, r_mkt)
+    with tab_merit:
+        st.caption(_t(
+            "Each group stacks its blocks sorted by price: the real pay-as-bid "
+            "supply curve. Normalize by installed capacity to compare sizes.",
+            "Cada grupo apila sus bloques ordenados por precio: la curva de oferta "
+            "pay-as-bid real. Normaliza por capacidad instalada para comparar tamaños."))
+        normalize = False
+        if not r_mkt["entity"] == "PM":
+            normalize = st.toggle(
+                _t("Normalize by installed capacity (%)",
+                   "Normalizar por capacidad instalada (%)"), key="r3_norm")
+        curve = merit_curve(dfb, level)
+        caps = group_capacity(dfb, level) if normalize else None
+        f = _fig_merit(curve, r_mkt, caps=caps, normalize=normalize)
+        if f:
+            st.plotly_chart(f, use_container_width=True)
+        else:
+            st.caption(_t("No priced blocks.", "Sin bloques con precio."))
+
+    with tab_tech:
+        if r_mkt["entity"] == "PM":
+            st.info(_t("Not available for Participant markets.",
+                       "No disponible en mercados de Participante."))
+        else:
+            st.caption(_t(
+                "Each point is one UP (its MW-weighted price). Boxes show the "
+                "spread per technology; colors separate agents: who bids "
+                "aggressively WITHIN the same technology.",
+                "Cada punto es una UP (su precio ponderado por MW). Las cajas "
+                "muestran la dispersión por tecnología; el color separa agentes: "
+                "quién oferta agresivo DENTRO de la misma tecnología."))
+            f = _fig_tech_box(ups, r_mkt)
             if f:
                 st.plotly_chart(f, use_container_width=True)
 
-    with tab_evo:
+    with tab_ups:
         st.caption(_t(
-            "How each agent's weighted price and offered MW move day by day — "
-            "the view for spotting strategy shifts (e.g. after a regulatory change).",
-            "Cómo se mueven día a día el precio ponderado y los MW de cada agente — "
-            "la vista para detectar cambios de estrategia (p.ej. tras un cambio regulatorio)."))
-        f = _fig_evo_price(evo, r_mkt)
-        st.plotly_chart(f, use_container_width=True) if f else \
-            st.caption(_t("No price series.", "Sin serie de precios."))
-        f = _fig_evo_mw(evo)
+            "One row per UP. 'Prima vs tech' = how much above (+) or below (−) "
+            "the median of its technology this UP bids.",
+            "Una fila por UP. 'Prima vs tech' = cuánto por encima (+) o por "
+            "debajo (−) de la mediana de su tecnología oferta esta UP."))
+        show = ups.rename(columns={
+            "SM": _t("Agent", "Representante"), "Tech": _t("Technology", "Tecnología"),
+            "Power_MW": "MW inst.", "mw_avg": _t("Avg MW offered", "MW medio ofertado"),
+            "pr_w": f"{_t('W.avg price', 'Precio pond.')} ({r_mkt['price_unit']})",
+            "pr_min": _t("Min", "Mín"), "pr_max": _t("Max", "Máx"),
+            "blocks": _t("Blocks", "Bloques"),
+            "cobertura": _t("Coverage", "Cobertura"),
+            "prima_tech": _t("Premium vs tech", "Prima vs tech")}).copy()
+        cov_col = _t("Coverage", "Cobertura")
+        show[cov_col] = (show[cov_col] * 100).round(1).astype(str) + " %"
+        st.dataframe(show.round(2), use_container_width=True, hide_index=True)
+
+    with tab_evo:
+        ent_meta = master[["UP", "SM", "Tech"]].drop_duplicates("UP")
+        evo = evolution_by_level(res["dfe"], ent_meta, level)
+        f = _fig_evo(evo, r_mkt, "pr_w")
+        if f:
+            st.plotly_chart(f, use_container_width=True)
+        f = _fig_evo(evo, r_mkt, "mw")
         if f:
             st.plotly_chart(f, use_container_width=True)
 
-    with tab_curve:
-        st.caption(_t(
-            "The B1→Bn ladder: a cheap first block secures dispatch; a flat ladder "
-            "signals indifference; a steep one, opportunistic pricing of the margin.",
-            "La escalera B1→Bn: un primer bloque barato asegura casación; una escalera "
-            "plana señala indiferencia; una empinada, precio oportunista del margen."))
-        g1, g2 = st.columns(2)
-        with g1:
-            f = _fig_curve_price(curve, r_mkt)
-            st.plotly_chart(f, use_container_width=True) if f else \
-                st.caption(_t("No price data.", "Sin datos de precio."))
-        with g2:
-            f = _fig_curve_mw(curve)
-            if f:
-                st.plotly_chart(f, use_container_width=True)
-
     with tab_ai:
-        payload = _build_payload(metrics, curve, r_mkt,
-                                 res["d_ini"], res["d_fin"], res["reps"])
+        payload = _build_payload(ups, r_mkt, res["d_ini"], res["d_fin"], res["reps"])
         md = _payload_md(payload)
-        st.caption(_t("Copy and paste into a Claude chat for the interpretation.",
-                      "Copia y pégalo en un chat con Claude para la interpretación."))
+        st.caption(_t("Copy into a Claude chat for the interpretation.",
+                      "Copia en un chat con Claude para la interpretación."))
         st.code(md, language="markdown")
         st.download_button(_t("Download .md", "Descargar .md"), md,
-                           file_name=f"ofertas_{res['mkt_key']}_{res['d_ini']}_{res['d_fin']}.md")
-        with st.expander(_t("Call the API instead (advanced)",
-                            "Llamar a la API directamente (avanzado)")):
-            st.caption(_t(
-                "Requires `anthropic` + ANTHROPIC_API_KEY in secrets and egress to api.anthropic.com.",
-                "Requiere `anthropic` + ANTHROPIC_API_KEY en secrets y egress a api.anthropic.com."))
+                           file_name=f"ofertas_up_{res['mkt_key']}_{res['d_ini']}_{res['d_fin']}.md")
+        with st.expander(_t("Call the API (advanced)", "Llamar a la API (avanzado)")):
             if st.button(_t("Interpret with Claude (API)", "Interpretar con Claude (API)")):
                 try:
                     with st.spinner("Claude…"):
@@ -743,27 +691,7 @@ def render_representantes(start_date=None, end_date=None, pm_map=None):
                     st.error(str(e))
 
 
-# ==============================================================================
-# INTEGRACIÓN EN app.py — idéntica a v1 (sin cambios si ya integraste v1)
-# ==============================================================================
-"""
-    from representantes_explorer import (
-        render_representantes, set_bq as set_rep_bq, set_helpers as set_rep_helpers)
-
-    set_rep_bq(client=None, project="miguel-energia", dataset="red_electrica_data")
-    set_rep_helpers(metric_card=metric_card, section_header=section_header,
-                    base_layout=base_layout, t=t)
-
-    name_repofertas = t("🏛️ Agent Offers", "🏛️ Ofertas Representantes")
-    # añadir name_repofertas a menu_options
-
-    elif seleccion_menu == name_repofertas:
-        render_representantes(start_date, end_date,
-                              pm_map={"GNERA": "GNE", "AXPO IBERIA": "AXP"})
-        gc.collect()
-"""
-
 if __name__ == "__main__":
-    st.set_page_config(page_title="Comparador de ofertas", layout="wide")
+    st.set_page_config(page_title="Ofertas de representantes", layout="wide")
     set_bq()
     render_representantes()
