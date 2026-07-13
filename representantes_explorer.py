@@ -205,7 +205,9 @@ def _q_blocks(mkt, entities, d_ini, d_fin):
           AND ENTITY IN ({ent_list}) AND VALUE_MW IS NOT NULL
         GROUP BY ENTITY, BLOCK"""
     else:
-        side_f = f"AND OFFER_SIDE = '{mkt['side']}'" if mkt["side"] else ""
+        # Las tablas simples son ya direccionales (dia32=Subir, dia42=Bajar…).
+        # OFFER_SIDE contiene 'Venta'/'Compra', no 'Subir'/'Bajar':
+        # filtrar por él dejaría 0 filas. Se omite.
         sql = f"""
         WITH mw AS (
           SELECT ENTITY, BLOCK, SUM(VALUE_MW) AS mw_sum,
@@ -213,14 +215,14 @@ def _q_blocks(mkt, entities, d_ini, d_fin):
                  COUNT(DISTINCT DELIVERY_DATE_DAY_CET) AS days
           FROM `{project}.{dataset}.{mkt['mw_table']}`
           WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
-            AND ENTITY IN ({ent_list}) {side_f} AND VALUE_MW IS NOT NULL
+            AND ENTITY IN ({ent_list}) AND VALUE_MW IS NOT NULL
           GROUP BY ENTITY, BLOCK),
         pr AS (
           SELECT ENTITY, BLOCK, AVG(VALUE_EUR) AS pr_w,
                  MIN(VALUE_EUR) AS pr_min, MAX(VALUE_EUR) AS pr_max
           FROM `{project}.{dataset}.{mkt['pr_table']}`
           WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
-            AND ENTITY IN ({ent_list}) {side_f} AND VALUE_EUR IS NOT NULL
+            AND ENTITY IN ({ent_list}) AND VALUE_EUR IS NOT NULL
           GROUP BY ENTITY, BLOCK)
         SELECT mw.ENTITY, mw.BLOCK, mw.mw_sum, mw.qh_count, mw.days,
                pr.pr_w, pr.pr_min, pr.pr_max
@@ -241,19 +243,18 @@ def _q_evolution(mkt, entities, d_ini, d_fin):
           AND ENTITY IN ({ent_list}) AND VALUE_MW IS NOT NULL
         GROUP BY d, ENTITY"""
     else:
-        side_f = f"AND OFFER_SIDE = '{mkt['side']}'" if mkt["side"] else ""
         sql = f"""
         WITH mw AS (
           SELECT DELIVERY_DATE_DAY_CET AS d, ENTITY, SUM(VALUE_MW) AS mw_sum
           FROM `{project}.{dataset}.{mkt['mw_table']}`
           WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
-            AND ENTITY IN ({ent_list}) {side_f} AND VALUE_MW IS NOT NULL
+            AND ENTITY IN ({ent_list}) AND VALUE_MW IS NOT NULL
           GROUP BY d, ENTITY),
         pr AS (
           SELECT DELIVERY_DATE_DAY_CET AS d, ENTITY, AVG(VALUE_EUR) AS pr_w
           FROM `{project}.{dataset}.{mkt['pr_table']}`
           WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
-            AND ENTITY IN ({ent_list}) {side_f} AND VALUE_EUR IS NOT NULL
+            AND ENTITY IN ({ent_list}) AND VALUE_EUR IS NOT NULL
           GROUP BY d, ENTITY)
         SELECT mw.d, mw.ENTITY, mw.mw_sum, pr.pr_w
         FROM mw LEFT JOIN pr USING (d, ENTITY)"""
