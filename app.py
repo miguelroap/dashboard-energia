@@ -1321,29 +1321,71 @@ elif seleccion_menu == name_rt5:
                     )
 
             with col_rt_a2:
-                st.markdown(f"**{t('Specific Installations (FCTRAV2, PEVER)','Instalaciones Específicas')}**")
-                up_rt5_v = filtered_rt5.loc[filtered_rt5['UP'].isin(['FCTRAV2','PEVER'])]
-                if not up_rt5_v.empty:
-                    e_p48_tr_diff_v = up_rt5_v['Energy_p48'] - up_rt5_v['Energy_tr']
-                    eur_mwh_r_v = up_rt5_v.groupby('MA', observed=True).apply(
-                        lambda x: x['Profit_tr_s'].sum() / e_p48_tr_diff_v[x.index].sum()
-                    ).replace([np.inf,-np.inf],0).fillna(0)
-                    w_avg_bid_v = up_rt5_v.groupby('MA', observed=True).apply(
-                        lambda x: (x['Price_RT5']*x['Energy_tr']).sum() / x['Energy_tr'].sum()
-                    ).replace([np.inf,-np.inf],0).fillna(0)
-                    res_v = pd.DataFrame({
-                        'Total Profit RT5':up_rt5_v.groupby('MA', observed=True)['Profit_tr_s'].sum(),
-                        '€/MWh_resource':eur_mwh_r_v,'Weighted Avg Bid':w_avg_bid_v,
-                        max_name:up_rt5_v.groupby('MA', observed=True)['Price_RT5'].max(),
-                        min_name:up_rt5_v.groupby('MA', observed=True)['Price_RT5'].min()
-                    }).dropna(subset=[min_name]).sort_values('Total Profit RT5', ascending=False)
-                    st.dataframe(
-                        res_v.style.format({
-                            'Total Profit RT5':'{:,.2f} €','€/MWh_resource':'{:.2f}',
-                            'Weighted Avg Bid':'{:.2f}',max_name:'{:.2f}',min_name:'{:.2f}'
-                        }),
-                        use_container_width=True
+                st.markdown(f"**{t('Portfolio Units','Unidades de la Cartera')}**")
+
+                ups_disponibles = sorted(filtered_rt5['UP'].dropna().unique().tolist())
+                ups_default = [u for u in ['FCTRAV2','PEVER'] if u in ups_disponibles]
+
+                col_f1, col_f2 = st.columns([3,2])
+                with col_f1:
+                    ups_sel = st.multiselect(
+                        t("Select UP(s)","Selecciona UP(s)"),
+                        options=ups_disponibles,
+                        default=ups_default,
+                        key="rt5_up_sel"
                     )
+                with col_f2:
+                    vista_up = st.radio(
+                        t("View","Vista"),
+                        options=[t("Period total","Total periodo"), t("Monthly breakdown","Desglose mensual")],
+                        key="rt5_up_view",
+                        horizontal=False
+                    )
+
+                if not ups_sel:
+                    st.info(t("Select at least one UP.","Selecciona al menos una UP."))
+                else:
+                    up_rt5_v = filtered_rt5.loc[filtered_rt5['UP'].isin(ups_sel)].copy()
+                    if up_rt5_v.empty:
+                        st.info(t("No RT5 offers for the selected UP(s).","No hay ofertas RT5 para la(s) UP(s) seleccionada(s)."))
+                    else:
+                        es_mensual = (vista_up == t("Monthly breakdown","Desglose mensual"))
+                        if es_mensual:
+                            up_rt5_v['Month'] = up_rt5_v['Day'].dt.to_period('M').astype(str)
+                            group_keys = ['UP','Month']
+                        else:
+                            group_keys = ['UP']
+
+                        up_rt5_v['e_diff'] = up_rt5_v['Energy_p48'] - up_rt5_v['Energy_tr']
+
+                        def _agg_up(x):
+                            e_diff_sum = x['e_diff'].sum()
+                            e_tr_sum = x['Energy_tr'].sum()
+                            return pd.Series({
+                                'Total Profit RT5': x['Profit_tr_s'].sum(),
+                                '€/MWh_resource': (x['Profit_tr_s'].sum() / e_diff_sum) if e_diff_sum else 0.0,
+                                'Weighted Avg Bid': ((x['Price_RT5']*x['Energy_tr']).sum() / e_tr_sum) if e_tr_sum else 0.0,
+                                max_name: x['Price_RT5'].max(),
+                                min_name: x['Price_RT5'].min(),
+                            })
+
+                        res_v = (up_rt5_v.groupby(group_keys, observed=True)
+                                 .apply(_agg_up)
+                                 .replace([np.inf,-np.inf],0).fillna(0))
+
+                        if es_mensual:
+                            res_v = res_v.reset_index().sort_values(['UP','Month'])
+                            res_v = res_v.set_index(['UP','Month'])
+                        else:
+                            res_v = res_v.sort_values('Total Profit RT5', ascending=False)
+
+                        st.dataframe(
+                            res_v.style.format({
+                                'Total Profit RT5':'{:,.2f} €','€/MWh_resource':'{:.2f}',
+                                'Weighted Avg Bid':'{:.2f}',max_name:'{:.2f}',min_name:'{:.2f}'
+                            }).background_gradient(subset=['Total Profit RT5'], cmap='RdYlGn'),
+                            use_container_width=True
+                        )
 
             # --- TOP 10 POR TECNOLOGÍA ---
             st.markdown("---")
