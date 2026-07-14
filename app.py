@@ -1475,6 +1475,94 @@ elif seleccion_menu == name_rt5:
                 fig_ew = plot_evo_plotly(filtered_rt5,'Wind','#34d399')
                 if fig_ew: st.plotly_chart(fig_ew, use_container_width=True)
 
+            # --- DISPERSIÓN DE OFERTAS CASADAS POR UP + REPRESENTANTE ---
+            st.markdown("---")
+            section_header("🎯", t("Matched Offer Dispersion by UP & Market Agent",
+                                   "Dispersión de Ofertas Casadas por UP y Representante"))
+
+            disp = filtered_rt5.dropna(subset=['Price_RT5','UP','MA']).copy()
+            disp = disp[disp['Energy_tr'] != 0]
+
+            if disp.empty:
+                st.info(t("No matched offers to plot.","No hay ofertas casadas para representar."))
+            else:
+                disp['UP'] = disp['UP'].astype(str)
+                disp['MA'] = disp['MA'].astype(str)
+                disp['UP_MA'] = disp['UP'] + " · " + disp['MA']
+
+                # Precio ponderado por energía casada de cada combinación UP+MA (para el default)
+                combo_price = (disp.groupby('UP_MA', observed=True)
+                               .apply(lambda x: (x['Price_RT5']*x['Energy_tr']).sum() / x['Energy_tr'].sum())
+                               .replace([np.inf,-np.inf], np.nan).dropna()
+                               .sort_values())  # ascendente => más negativos primero
+
+                # --- Controles ---
+                col_d1, col_d2, col_d3 = st.columns([2,2,1.2])
+                with col_d1:
+                    techs_disp = sorted(disp['Tech'].dropna().unique().tolist())
+                    tech_sel = st.multiselect(
+                        t("Technology","Tecnología"),
+                        options=techs_disp, default=techs_disp, key="rt5_disp_tech")
+                with col_d2:
+                    n_default = min(10, len(combo_price))
+                    default_combos = combo_price.head(n_default).index.tolist()
+                    combos_sel = st.multiselect(
+                        t("UP · Market Agent (default = most negative prices)",
+                          "UP · Representante (por defecto = precios más negativos)"),
+                        options=combo_price.index.tolist(),
+                        default=default_combos, key="rt5_disp_combos")
+                with col_d3:
+                    color_by = st.radio(
+                        t("Color by","Color por"),
+                        options=[t("Market Agent","Representante"), "UP", t("Technology","Tecnología")],
+                        key="rt5_disp_color")
+
+                disp_f = disp[disp['Tech'].isin(tech_sel)]
+                if combos_sel:
+                    disp_f = disp_f[disp_f['UP_MA'].isin(combos_sel)]
+
+                if disp_f.empty:
+                    st.info(t("No data for the current filter.","Sin datos para el filtro actual."))
+                else:
+                    if color_by == "UP":
+                        color_col = 'UP'
+                    elif color_by == t("Technology","Tecnología"):
+                        color_col = 'Tech'
+                    else:
+                        color_col = 'MA'
+
+                    # Orden del eje X por precio ponderado ascendente (más negativo a la izquierda)
+                    order_ups = (disp_f.groupby('UP', observed=True)
+                                 .apply(lambda x: (x['Price_RT5']*x['Energy_tr']).sum() / x['Energy_tr'].sum())
+                                 .sort_values().index.tolist())
+
+                    fig_disp = px.strip(
+                        disp_f, x='UP', y='Price_RT5', color=color_col,
+                        stripmode='overlay',
+                        category_orders={'UP': order_ups},
+                        hover_data={'MA':True,'UP':True,'Price_RT5':':.2f','Energy_tr':':.2f','Tech':True},
+                        labels={'Price_RT5': t('Matched Price (€/MWh)','Precio Casado (€/MWh)'),
+                                'UP':'UP','MA':t('Market Agent','Representante')}
+                    )
+                    fig_disp.update_traces(jitter=0.35, marker=dict(size=7, opacity=0.65,
+                                            line=dict(width=0.5, color='white')))
+                    # Línea de referencia en 0 €/MWh
+                    fig_disp.add_hline(y=0, line_dash="dash", line_color="#94a3b8", line_width=1)
+
+                    fig_disp.update_layout(
+                        paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
+                        font=dict(family="Inter", color="#46556B"),
+                        legend_title_text="", height=460,
+                        margin=dict(l=10,r=10,t=20,b=80),
+                        xaxis_title="", yaxis_title=t('Matched Price (€/MWh)','Precio Casado (€/MWh)')
+                    )
+                    fig_disp.update_xaxes(gridcolor="#E3E8F0", tickangle=-40)
+                    fig_disp.update_yaxes(gridcolor="#E3E8F0", zeroline=False)
+                    st.plotly_chart(fig_disp, use_container_width=True)
+                    st.caption(t(
+                        "Each point is a matched RT5 offer. X-axis ordered by energy-weighted price (most negative left). Dashed line = 0 €/MWh.",
+                        "Cada punto es una oferta RT5 casada. Eje X ordenado por precio ponderado por energía (más negativo a la izquierda). Línea discontinua = 0 €/MWh."))
+
     except Exception as e:
         st.error(f"Error RT5: {e}")
     gc.collect()
