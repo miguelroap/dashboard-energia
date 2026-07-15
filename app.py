@@ -1096,19 +1096,37 @@ elif seleccion_menu == name_mra:
             'Profit_se':'Sec. Activation','Profit_i':'Intraday'
         }
 
+        # Los filtros persisten vía session_state (keys mra_ma/mra_tech/mra_up), de
+        # modo que un cambio de fechas ya no los devuelve a su valor por defecto.
+        # Si al cambiar de fechas la selección guardada deja de existir entre las
+        # opciones, se purga para que el widget caiga limpiamente en su default.
+        def _keep(key, options, fallback_idx=0):
+            """Devuelve el index a usar y sanea el session_state huérfano."""
+            if key in st.session_state:
+                if st.session_state[key] in options:
+                    return list(options).index(st.session_state[key])
+                del st.session_state[key]   # valor ya no válido -> volver al default
+            return fallback_idx
+
         f_ma, f_tech, f_up = st.columns(3)
         with f_ma:
             qualified_MAs = sorted(allh_mra['MA'].unique()) if not allh_mra.empty else [t('No data','Sin datos')]
-            default_ma_idx = list(qualified_MAs).index('GNERA') if 'GNERA' in qualified_MAs else 0
-            sel_ma = st.selectbox(t("1. Market Agent (MA)","1. Representante (MA)"), qualified_MAs, index=default_ma_idx)
+            idx_ma = _keep('mra_ma', qualified_MAs,
+                           list(qualified_MAs).index('GNERA') if 'GNERA' in qualified_MAs else 0)
+            sel_ma = st.selectbox(t("1. Market Agent (MA)","1. Representante (MA)"), qualified_MAs,
+                                  index=idx_ma, key="mra_ma")
         with f_tech:
             tech_opts = sorted(allh_mra.loc[allh_mra['MA']==sel_ma,'Tech'].unique()) if sel_ma != t('No data','Sin datos') else [t('No data','Sin datos')]
-            default_tech_idx = list(tech_opts).index('Wind') if 'Wind' in tech_opts else 0
-            sel_tech = st.selectbox(t("2. Technology","2. Tecnología"), tech_opts, index=default_tech_idx)
+            idx_tech = _keep('mra_tech', tech_opts,
+                             list(tech_opts).index('Wind') if 'Wind' in tech_opts else 0)
+            sel_tech = st.selectbox(t("2. Technology","2. Tecnología"), tech_opts,
+                                    index=idx_tech, key="mra_tech")
         with f_up:
             up_rt5 = allh_mra.loc[(allh_mra['MA']==sel_ma) & (allh_mra['Tech']==sel_tech)]
             up_opts = [t('Any UP','Cualquier UP')] + sorted(up_rt5['UP'].unique().tolist())
-            sel_up = st.selectbox(t("3. Production Unit (UP)","3. Unidad (UP)"), up_opts)
+            idx_up = _keep('mra_up', up_opts, 0)
+            sel_up = st.selectbox(t("3. Production Unit (UP)","3. Unidad (UP)"), up_opts,
+                                  index=idx_up, key="mra_up")
 
         if sel_up == t('Any UP','Cualquier UP'): up_df = allh_mra.loc[allh_mra['UP'].isin(up_rt5['UP'].unique())].copy()
         else: up_df = allh_mra.loc[allh_mra['UP'] == sel_up].copy()
@@ -1691,6 +1709,7 @@ elif seleccion_menu == name_verbund:
             'UPAYM':['Ayamonte',26.0,0.5],
             'EGST146':['Barroso',21.6,0.5],
             'PEVER':['Sorolla 1',182.3,0.6],'PEVER2':['Sorolla Mallén',29.8,0.6],
+            'UPCOLI':['La Colina',20.4,0.6],'UPSPIV':['Santos de la Piedra',16.0,0.6],
             'CLIFV30':['Pinos Puente 1',0.0,0.0],'CLIFV31':['Pinos Puente 2',0.0,0.0],'CLIFV32':['Pinos Puente 3',0.0,0.0],
             'UPBUS':['Buseco',0.0,0.0],'UPLMP':['Loma',0.0,0.0],'UPSLN':['La Solana',0.0,0.0],
             'GALPS59':['Buseco_Galp',0.0,0.0],'GALPS57':['Loma_Galp',0.0,0.0],'GALPS56':['La Solana_Galp',0.0,0.0],
@@ -1705,6 +1724,13 @@ elif seleccion_menu == name_verbund:
         df_agg_v['Profit Verbund'] = df_agg_v['Total Profit'] * df_agg_v['Verbund_Pct']
         df_agg_v['Potencia MW'] = [val[1] for val in INPUT_DATA.values()]
         df_agg_v['Profit Verbund / MW'] = np.where(df_agg_v['Potencia MW']>0, df_agg_v['Profit Verbund']/df_agg_v['Potencia MW'], 0)
+
+        # Energía P48 por UP (base del €/MWh en el gráfico)
+        if 'Energy_p48' in df_v.columns:
+            e48_v = df_v.groupby('UP', observed=True)['Energy_p48'].sum(numeric_only=True)
+        else:
+            e48_v = pd.Series(dtype=float)
+        df_agg_v['Energy_p48'] = df_agg_v['UP'].map(e48_v).fillna(0.0)
 
         # ── Eliminar filas donde todos los valores numéricos de mercado son cero ──
         profit_avail = [c for c in profit_cols_v if c in df_agg_v.columns]
@@ -1744,34 +1770,64 @@ elif seleccion_menu == name_verbund:
         st.dataframe(
             df_final_v[cols_to_show].style
             .format({c:"{:,.2f} €" for c in num_cols})
-            .background_gradient(subset=['Total Profit','Profit Verbund'], cmap='RdYlGn')
             .apply(lambda row: ['font-weight:bold; background:#EEF1F6' if row['UP']=='Total' else '' for _ in row], axis=1),
             use_container_width=True
         )
 
-        # Gráfico de barras Verbund
+        # Gráfico de barras Verbund — métrica seleccionable
         df_chart = df_final_v[df_final_v['UP']!='Total'].copy()
-        df_chart = df_chart[df_chart['Profit Verbund'] != 0].sort_values('Profit Verbund', ascending=True)
-        if not df_chart.empty:
+        df_chart = df_chart[df_chart['Profit Verbund'] != 0]
+
+        metric_opts = ["€", "€/MW", "€/MWh"]
+        sel_metric_v = st.radio(
+            t("Metric","Métrica"), options=metric_opts,
+            key="verbund_metric", horizontal=True
+        )
+
+        if sel_metric_v == "€/MW":
+            den_v = df_chart['Potencia MW']
+            val_v = np.where(den_v > 0, df_chart['Profit Verbund'] / den_v.replace(0, np.nan), np.nan)
+            unit_v, fmt_v = "€/MW", "{:,.1f}"
+        elif sel_metric_v == "€/MWh":
+            den_v = df_chart['Energy_p48'].abs()
+            val_v = np.where(den_v > 0, df_chart['Profit Verbund'] / den_v.replace(0, np.nan), np.nan)
+            unit_v, fmt_v = "€/MWh", "{:,.2f}"
+        else:
+            val_v = df_chart['Profit Verbund'].values
+            unit_v, fmt_v = "€", "{:,.0f}"
+
+        df_chart['_val'] = val_v
+        df_chart = df_chart.dropna(subset=['_val'])
+        df_chart = df_chart[df_chart['_val'] != 0].sort_values('_val', ascending=True)
+
+        if df_chart.empty:
+            st.info(t("No installations with a valid denominator for this metric.",
+                      "Sin instalaciones con denominador válido para esta métrica."))
+        else:
             fig_v = go.Figure(go.Bar(
-                x=df_chart['Profit Verbund'], y=df_chart['Installation'],
+                x=df_chart['_val'], y=df_chart['Installation'],
                 orientation='h',
-                marker_color=[C_POS if v>=0 else C_NEG for v in df_chart['Profit Verbund']],
-                text=[f"{v:,.0f} €" for v in df_chart['Profit Verbund']],
+                marker_color=[C_POS if v>=0 else C_NEG for v in df_chart['_val']],
+                text=[f"{fmt_v.format(v)} {unit_v}" for v in df_chart['_val']],
                 textposition='outside',
-                hovertemplate="<b>%{y}</b><br>Profit Verbund: %{x:,.0f} €<extra></extra>"
+                hovertemplate="<b>%{y}</b><br>%{x:,.2f} "+unit_v+"<extra></extra>"
             ))
             fig_v.update_layout(
-                title=t("Verbund Profit by Installation","Profit Verbund por Instalación"),
+                title=t(f"Verbund Profit by Installation ({unit_v})",
+                        f"Profit Verbund por Instalación ({unit_v})"),
                 paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
                 font=dict(family="Inter", color="#46556B"), title_font=dict(family="Inter", color="#13233B", size=13),
-                xaxis_title="€", yaxis_title="",
+                xaxis_title=unit_v, yaxis_title="",
                 margin=dict(l=10,r=100,t=50,b=10), height=420,
                 showlegend=False
             )
             fig_v.update_xaxes(gridcolor="#E3E8F0")
             fig_v.update_yaxes(gridcolor="#E3E8F0")
             st.plotly_chart(fig_v, use_container_width=True)
+            if sel_metric_v != "€":
+                st.caption(t(
+                    "Installations without installed capacity (MW = 0) are excluded from €/MW; those without P48 energy are excluded from €/MWh.",
+                    "Las instalaciones sin potencia instalada (MW = 0) se excluyen del €/MW; las que no tienen energía P48 se excluyen del €/MWh."))
 
     except Exception as e:
         st.warning(f"Error Verbund: {e}")
