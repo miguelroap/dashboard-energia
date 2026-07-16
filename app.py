@@ -21,7 +21,7 @@ from representantes_explorer import (
     set_helpers as set_rep_helpers,
 )
 from i90_qh_explorer import (
-    render_i90_qh, set_gcs_qh, set_helpers_qh
+    render_i90_qh, set_bq_qh, set_helpers_qh
 )
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="⚡")
@@ -3092,8 +3092,7 @@ elif seleccion_menu == name_repofertas:
     gc.collect()
 
 elif seleccion_menu == name_qh:
-    set_gcs_qh(project="miguel-energia",
-               bucket="dashboard-energia-data", prefix="i90rrtt")
+    set_bq_qh(project="miguel-energia", dataset="red_electrica_data")
     set_helpers_qh(t=t, section_header=section_header)
     render_i90_qh(start_date, end_date, default_ups=['PEVER', 'FCTRAV2'])
     gc.collect()
