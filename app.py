@@ -20,6 +20,9 @@ from representantes_explorer import (
     set_bq as set_rep_bq,
     set_helpers as set_rep_helpers,
 )
+from i90_qh_explorer import (
+    render_i90_qh, set_gcs_qh, set_helpers_qh
+)
 
 st.set_page_config(page_title="Dashboard Ancillary Services", layout="wide", page_icon="⚡")
 
@@ -519,8 +522,9 @@ name_supply   = t("🏪 Retailers (Supply)", "🏪 Comercializadoras (Supply)")
 name_portfolio = t("🗂️ MRA Portfolio", "🗂️ Portfolio MRA")
 name_explorer = t("🔬 Unit Explorer", "🔬 Explorador Unidad")
 name_repofertas = t("🏛️ Agent Offers", "🏛️ Ofertas Representantes")
+name_qh = t("🧭 I90 QH Explorer", "🧭 Explorador QH I90")
 
-menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply, name_portfolio, name_explorer, name_repofertas]
+menu_options = [name_main, name_mra, name_rt5, name_gnera, name_verbund, name_evo, name_supply, name_portfolio, name_explorer, name_repofertas, name_qh]
 seleccion_menu = cont_nav.radio("Menu", menu_options, label_visibility="collapsed")
 
 # ==============================================================================
@@ -3085,4 +3089,11 @@ elif seleccion_menu == name_repofertas:
         start_date, end_date,
         pm_map={"GNERA": "GNE", "AXPO IBERIA": "AXP"},  # ajusta a tus representantes
     )
+    gc.collect()
+
+elif seleccion_menu == name_qh:
+    set_gcs_qh(project="miguel-energia",
+               bucket="dashboard-energia-data", prefix="i90rrtt")
+    set_helpers_qh(t=t, section_header=section_header)
+    render_i90_qh(start_date, end_date, default_ups=['PEVER', 'FCTRAV2'])
     gc.collect()
