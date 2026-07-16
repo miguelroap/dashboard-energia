@@ -240,8 +240,8 @@ def _load_spot(d_ini, d_fin):
 def _lay(ytitle, ytitle2=None, height=380, title=None):
     lay = dict(paper_bgcolor="#ffffff", plot_bgcolor="#FBFCFE",
                font=dict(family="Inter", color="#46556B", size=11),
-               margin=dict(l=10, r=10, t=34, b=10), height=height,
-               legend=dict(orientation="h", y=1.14, x=0),
+               margin=dict(l=10, r=10, t=42, b=10), height=height,
+               legend=dict(orientation="h", yanchor="top", y=-0.18, x=0),
                hovermode="x unified",
                yaxis=dict(title=ytitle, gridcolor="#E3E8F0"),
                xaxis=dict(gridcolor="#E3E8F0"))
@@ -253,6 +253,25 @@ def _lay(ytitle, ytitle2=None, height=380, title=None):
     return lay
 
 
+_GRID = {"idx": None}   # malla QH del periodo activo (la fija render_i90_qh)
+
+
+def _set_grid(d_ini: dt.date, d_fin: dt.date):
+    _GRID["idx"] = pd.date_range(pd.Timestamp(d_ini),
+                                 pd.Timestamp(d_fin) + pd.Timedelta(days=1),
+                                 freq="15min", inclusive="left")
+
+
+def _on_grid(d: pd.DataFrame):
+    """Serie [ts, v] reindexada a la malla QH completa: los QH sin dato
+    quedan como NaN y connectgaps=False rompe la línea (sin rectas falsas)."""
+    grid = _GRID["idx"]
+    if grid is None or d.empty:
+        return d["ts"], d["v"]
+    s = d.drop_duplicates("ts").set_index("ts")["v"].reindex(grid)
+    return grid, s.to_numpy()
+
+
 def _add_blocks(fig, df_blk, to_mwh=False, prefix=""):
     if df_blk.empty:
         return False
@@ -260,8 +279,10 @@ def _add_blocks(fig, df_blk, to_mwh=False, prefix=""):
                   key=lambda b: int("".join(filter(str.isdigit, str(b))) or 99))
     for i, b in enumerate(blks):
         g = df_blk[df_blk["blk"] == b]
-        y = g["v"] * 0.25 if to_mwh else g["v"]
-        fig.add_trace(go.Scatter(x=g["ts"], y=y, name=f"{prefix}{b}",
+        x, y = _on_grid(g)
+        if to_mwh:
+            y = y * 0.25
+        fig.add_trace(go.Scatter(x=x, y=y, name=f"{prefix}{b}",
                                  line=dict(width=1.4,
                                            color=C_BLOCKS[i % len(C_BLOCKS)]),
                                  connectgaps=False))
@@ -274,7 +295,8 @@ def _add_series(fig, df, name, color, width=2.0, dash=None, yaxis=None,
     if d.empty:
         return False
     kw = dict(yaxis=yaxis) if yaxis else {}
-    fig.add_trace(go.Scatter(x=d["ts"], y=d["v"], name=name,
+    x, y = _on_grid(d)
+    fig.add_trace(go.Scatter(x=x, y=y, name=name,
                              line=dict(width=width, color=color, dash=dash),
                              connectgaps=False, **kw))
     return True
@@ -365,6 +387,7 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
         st.info(_t("Select at least one UP.", "Selecciona al menos una UP."))
         return
 
+    _set_grid(d_ini, d_fin)
     ups = tuple(sorted(ups_sel))
     missing = []
 
