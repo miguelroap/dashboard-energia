@@ -236,6 +236,19 @@ def q_act_cmp(kind, grp, d_ini, d_fin, ups):
     return _run(sql, d_ini, d_fin, tuple(ups))
 
 
+def q_offer_cmp(table, field, d_ini, d_fin, ups):
+    """Ofertas POR UP, agregando bloques: MW sumados o precio medio simple."""
+    agg = "SUM(VALUE_MW)" if field == "mw" else "AVG(VALUE_EUR)"
+    notnull = "VALUE_MW" if field == "mw" else "VALUE_EUR"
+    sql = f"""
+        SELECT DELIVERY_DATE AS ts, ENTITY AS up, {agg} AS v
+        FROM {_tbl(table)}
+        WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
+          AND ENTITY IN UNNEST(@ups) AND {notnull} IS NOT NULL
+        GROUP BY ts, up ORDER BY ts"""
+    return _run(sql, d_ini, d_fin, tuple(ups))
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_up_master():
     sql = f"""
@@ -465,7 +478,7 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
 
     tab_prog, tab_pdbf, tab_tr, tab_mfrr, tab_cmp, tab_res = st.tabs([
         _t("Programs", "Programas"), "RRTT PDBF",
-        _t("RRTT Real Time", "RRTT Tiempo Real"), "mFRR",
+        "RRTT RT5", "mFRR",
         _t("UP comparison", "Comparativa UP"),
         _t("Period summary", "Resumen periodo")])
 
@@ -536,27 +549,27 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
             _show(_panel_mw(offers[("tr", "sub", "mw")], act_tr, "RT1",
                             _t("Activated RT1", "Activado RT1"),
                             pr_tr, "rt1_sub", spot,
-                            _t("UP · TR offer (DIA32) vs activated (DIA08)",
-                               "SUBIR · Oferta TR (DIA32) vs activado "
+                            _t("UP · RT5 offer (DIA32) vs activated (DIA08)",
+                               "SUBIR · Oferta RT5 (DIA32) vs activado "
                                "(DIA08)")), no_data)
             _show(_panel_pr(offers[("tr", "sub", "pr")], pr_tr, "rt1_sub",
                             spot,
-                            _t("UP · TR offer price (DIA31) vs clearing "
+                            _t("UP · RT5 offer price (DIA31) vs clearing "
                                "(DIA10)",
-                               "SUBIR · Precio oferta TR (DIA31) vs casación "
+                               "SUBIR · Precio oferta RT5 (DIA31) vs casación "
                                "(DIA10)")), no_data)
         with cb:
             _show(_panel_mw(offers[("tr", "baj", "mw")], act_tr, "F2",
                             _t("Activated F2", "Activado F2"),
                             pr_tr, "f2_baj", spot,
-                            _t("DOWN · TR offer (DIA42) vs activated (DIA08)",
-                               "BAJAR · Oferta TR (DIA42) vs activado "
+                            _t("DOWN · RT5 offer (DIA42) vs activated (DIA08)",
+                               "BAJAR · Oferta RT5 (DIA42) vs activado "
                                "(DIA08)")), no_data)
             _show(_panel_pr(offers[("tr", "baj", "pr")], pr_tr, "f2_baj",
                             spot,
-                            _t("DOWN · TR offer price (DIA24) vs clearing "
+                            _t("DOWN · RT5 offer price (DIA24) vs clearing "
                                "(DIA10)",
-                               "BAJAR · Precio oferta TR (DIA24) vs casación "
+                               "BAJAR · Precio oferta RT5 (DIA24) vs casación "
                                "(DIA10)")), no_data)
 
     # ── 4 · mFRR ─────────────────────────────────────────────────────────────
@@ -577,97 +590,147 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
 
     # ── 5 · COMPARATIVA UP ───────────────────────────────────────────────────
     with tab_cmp:
+        # Catálogo: (tipo, args..., unidad)  unidad: 'e' energía | 'p' precio
         MET_CMP = {
-            "P48":              ("prog", RESULT_TABLES["p48"]),
-            "PDBF":             ("prog", RESULT_TABLES["pdbf"]),
-            "PHFC":             ("prog", RESULT_TABLES["phfc"]),
-            "RRTT RT1 (DIA03)": ("act", "pdbf", "RT1"),
-            "RRTT F2 (DIA03)":  ("act", "pdbf", "F2"),
-            "TR RT1 (DIA08)":   ("act", "tr", "RT1"),
-            "TR F2 (DIA08)":    ("act", "tr", "F2"),
-            "mFRR (DIA07)":     ("prog", MFRR_E_TABLE),
+            "P48":                      ("prog", RESULT_TABLES["p48"], "e"),
+            "PDBF":                     ("prog", RESULT_TABLES["pdbf"], "e"),
+            "PHFC":                     ("prog", RESULT_TABLES["phfc"], "e"),
+            "Casado RRTT RT1 (DIA03)":  ("act", "pdbf", "RT1", "e"),
+            "Casado RRTT F2 (DIA03)":   ("act", "pdbf", "F2", "e"),
+            "Casado RT5 RT1 (DIA08)":   ("act", "tr", "RT1", "e"),
+            "Casado RT5 F2 (DIA08)":    ("act", "tr", "F2", "e"),
+            "mFRR activada (DIA07)":    ("prog", MFRR_E_TABLE, "e"),
+            "Of. RRTT subir MW (DIA17)": ("off", ("pdbf", "sub", "mw"), "e"),
+            "Of. RRTT bajar MW (DIA41)": ("off", ("pdbf", "baj", "mw"), "e"),
+            "Of. RT5 subir MW (DIA32)":  ("off", ("tr", "sub", "mw"), "e"),
+            "Of. RT5 bajar MW (DIA42)":  ("off", ("tr", "baj", "mw"), "e"),
+            "Of. mFRR MW (DIA15)":       ("off_t", (MFRR_OFFER_TABLE, "mw"), "e"),
+            "Pr. RRTT subir (DIA22)":    ("off", ("pdbf", "sub", "pr"), "p"),
+            "Pr. RRTT bajar (DIA23)":    ("off", ("pdbf", "baj", "pr"), "p"),
+            "Pr. RT5 subir (DIA31)":     ("off", ("tr", "sub", "pr"), "p"),
+            "Pr. RT5 bajar (DIA24)":     ("off", ("tr", "baj", "pr"), "p"),
+            "Pr. mFRR (DIA15)":          ("off_t", (MFRR_OFFER_TABLE, "pr"), "p"),
         }
-        cc1, cc2 = st.columns([2, 2])
+        DASHES = ["solid", "dot", "dash", "dashdot", "longdash",
+                  "longdashdot"]
+
+        cc1, cc2 = st.columns([3, 2])
         with cc1:
-            met_sel = st.selectbox(_t("Metric", "Métrica"),
-                                   options=list(MET_CMP.keys()),
-                                   key="qh_cmp_met")
+            mets_sel = st.multiselect(
+                _t("Metrics (energy left axis · price right axis)",
+                   "Métricas (energía eje izq. · precio eje der.)"),
+                options=list(MET_CMP.keys()), default=["P48"],
+                key="qh_cmp_mets")
         with cc2:
             norm = st.radio(
                 _t("Scale", "Escala"),
-                options=[_t("Absolute (MWh/QH)", "Absoluto (MWh/QH)"),
+                options=[_t("Absolute", "Absoluto"),
                          _t("Normalized (÷ installed MW)",
                             "Normalizado (÷ MW instalados)")],
                 key="qh_cmp_norm", horizontal=True)
-        es_norm = norm != _t("Absolute (MWh/QH)", "Absoluto (MWh/QH)")
-
-        spec = MET_CMP[met_sel]
-        if spec[0] == "prog":
-            df_cmp = q_program_cmp(spec[1], d_ini, d_fin, ups)
-        else:
-            df_cmp = q_act_cmp(spec[1], spec[2], d_ini, d_fin, ups)
+        es_norm = norm != _t("Absolute", "Absoluto")
 
         mw_map = {}
         if not master.empty:
             mw_map = master.set_index("UP")["Power_MW"].to_dict()
 
-        if df_cmp.empty:
-            st.info(no_data)
-        else:
-            sin_mw = []
-            fig = go.Figure()
-            for i, u in enumerate(ups):
-                sub = df_cmp[df_cmp["up"] == u][["ts", "v"]]
-                if sub.empty:
-                    continue
-                x, y = _on_grid(sub)
-                if es_norm:
-                    mw = mw_map.get(u)
-                    if not mw or pd.isna(mw) or mw <= 0:
-                        sin_mw.append(u)
-                        continue
-                    y = y / mw
-                fig.add_trace(go.Scatter(
-                    x=x, y=y, name=u, connectgaps=False,
-                    line=dict(width=1.6, color=C_BLOCKS[i % len(C_BLOCKS)])))
-            fig.update_layout(**_lay(
-                _t("MWh/QH per MW", "MWh/QH por MW") if es_norm
-                else "MWh/QH", height=430))
-            st.plotly_chart(fig, use_container_width=True)
-            if sin_mw:
-                st.caption(_t(
-                    f"Excluded (no installed MW in UP master): "
-                    f"{', '.join(sin_mw)}",
-                    f"Excluidas (sin MW instalados en el maestro): "
-                    f"{', '.join(sin_mw)}"))
+        def _fetch_cmp(spec):
+            if spec[0] == "prog":
+                return q_program_cmp(spec[1], d_ini, d_fin, ups)
+            if spec[0] == "act":
+                return q_act_cmp(spec[1], spec[2], d_ini, d_fin, ups)
+            if spec[0] == "off":
+                return q_offer_cmp(OFFER_TABLES[spec[1]], spec[1][2],
+                                   d_ini, d_fin, ups)
+            return q_offer_cmp(spec[1][0], spec[1][1], d_ini, d_fin, ups)
 
-            # Totales del periodo por UP
-            tot = (df_cmp.groupby("up")["v"].sum()
-                   .reindex(list(ups)).dropna())
-            if es_norm:
-                tot = pd.Series(
-                    {u: t_ / mw_map[u] for u, t_ in tot.items()
-                     if mw_map.get(u) and not pd.isna(mw_map[u])
-                     and mw_map[u] > 0}, dtype=float)
-            if not tot.empty:
-                figb = go.Figure(go.Bar(
-                    x=tot.index, y=tot.values,
-                    marker_color=[C_BLOCKS[list(ups).index(u) % len(C_BLOCKS)]
-                                  for u in tot.index],
-                    text=[f"{v:,.1f}" for v in tot.values],
-                    textposition="outside"))
-                figb.update_layout(**_lay(
+        if not mets_sel:
+            st.info(_t("Select at least one metric.",
+                       "Selecciona al menos una métrica."))
+        else:
+            sin_mw, vacias = set(), []
+            fig = go.Figure()
+            has_e = has_p = False
+            tot_rows = []
+            for j, m in enumerate(mets_sel):
+                spec = MET_CMP[m]
+                unidad = spec[-1]
+                df_cmp = _fetch_cmp(spec)
+                if df_cmp.empty:
+                    vacias.append(m)
+                    continue
+                es_of_mw = spec[0] in ("off", "off_t") and unidad == "e"
+                for i, u in enumerate(ups):
+                    sub = df_cmp[df_cmp["up"] == u][["ts", "v"]]
+                    if sub.empty:
+                        continue
+                    x, y = _on_grid(sub)
+                    if es_of_mw:
+                        y = y * 0.25          # MW ofertados -> MWh/QH
+                    if unidad == "e" and es_norm:
+                        mw = mw_map.get(u)
+                        if not mw or pd.isna(mw) or mw <= 0:
+                            sin_mw.add(u)
+                            continue
+                        y = y / mw
+                    if unidad == "e":
+                        has_e = True
+                        tot_rows.append((m, u, np.nansum(y)))
+                    else:
+                        has_p = True
+                    fig.add_trace(go.Scatter(
+                        x=x, y=y, name=f"{u} · {m}", connectgaps=False,
+                        yaxis="y2" if unidad == "p" else "y",
+                        line=dict(width=1.5,
+                                  color=C_BLOCKS[i % len(C_BLOCKS)],
+                                  dash=DASHES[j % len(DASHES)])))
+            y1 = (_t("MWh/QH per MW", "MWh/QH por MW") if es_norm
+                  else "MWh/QH") if has_e else "€/MWh"
+            fig.update_layout(**_lay(y1, "€/MWh" if (has_e and has_p)
+                                     else None, height=450))
+            st.plotly_chart(fig, use_container_width=True)
+
+            notas = []
+            if vacias:
+                notas.append(_t("No data: ", "Sin datos: ")
+                             + ", ".join(vacias))
+            if sin_mw:
+                notas.append(_t("Excluded from normalization (no MW): ",
+                                "Excluidas de normalización (sin MW): ")
+                             + ", ".join(sorted(sin_mw)))
+            if es_norm and has_p:
+                notas.append(_t("Prices are never normalized.",
+                                "Los precios no se normalizan."))
+            notas.append(_t(
+                "Color = UP · line style = metric. Offers aggregate blocks "
+                "(MW summed ×0.25 → MWh/QH; price = simple block average). "
+                "Block detail lives in the RRTT/RT5/mFRR tabs.",
+                "Color = UP · trazo = métrica. Las ofertas agregan bloques "
+                "(MW sumados ×0.25 → MWh/QH; precio = media simple de "
+                "bloques). El detalle por bloque está en las pestañas "
+                "RRTT/RT5/mFRR."))
+            st.caption(" · ".join(notas))
+
+            # Totales del periodo (solo métricas de energía)
+            if tot_rows:
+                tot = pd.DataFrame(tot_rows, columns=["met", "up", "v"])
+                figb = go.Figure()
+                for j, m in enumerate(
+                        [m for m in mets_sel if m in tot["met"].unique()]):
+                    g = tot[tot["met"] == m].set_index("up")["v"] \
+                        .reindex(list(ups)).dropna()
+                    figb.add_trace(go.Bar(
+                        x=g.index, y=g.values, name=m,
+                        text=[f"{v:,.1f}" for v in g.values],
+                        textposition="outside"))
+                figb.update_layout(barmode="group", **_lay(
                     _t("MWh per MW (period)", "MWh por MW (periodo)")
                     if es_norm else _t("MWh (period)", "MWh (periodo)"),
-                    height=300,
-                    title=_t(f"Period total by UP — {met_sel}",
-                             f"Total del periodo por UP — {met_sel}")))
+                    height=320,
+                    title=_t("Period totals by UP (energy metrics)",
+                             "Totales del periodo por UP (métricas de "
+                             "energía)")))
                 st.plotly_chart(figb, use_container_width=True)
-            st.caption(_t(
-                "Normalized = each UP divided by its installed MW from the "
-                "UP master — comparable utilization across sizes.",
-                "Normalizado = cada UP dividida por sus MW instalados del "
-                "maestro — utilización comparable entre tamaños."))
 
     # ── 6 · RESUMEN PERIODO ──────────────────────────────────────────────────
     with tab_res:
@@ -681,8 +744,8 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
             "P48 (MWh)":    _daily(prog["p48"]),
             "RT1 (MWh)":    _daily(act_pdbf, "RT1"),
             "F2 (MWh)":     _daily(act_pdbf, "F2"),
-            "TR RT1 (MWh)": _daily(act_tr, "RT1"),
-            "TR F2 (MWh)":  _daily(act_tr, "F2"),
+            "RT5 RT1 (MWh)": _daily(act_tr, "RT1"),
+            "RT5 F2 (MWh)":  _daily(act_tr, "F2"),
             "mFRR (MWh)":   _daily(mfrr_e),
         }).fillna(0.0)
         res.index.name = _t("Day", "Día")
@@ -691,8 +754,8 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
         fig = go.Figure()
         for col, color in (("RT1 (MWh)", C_PROG["rt1"]),
                            ("F2 (MWh)", C_PROG["f2"]),
-                           ("TR RT1 (MWh)", "#7C3AED"),
-                           ("TR F2 (MWh)", "#0891B2"),
+                           ("RT5 RT1 (MWh)", "#7C3AED"),
+                           ("RT5 F2 (MWh)", "#0891B2"),
                            ("mFRR (MWh)", C_PROG["mfrr"])):
             fig.add_trace(go.Bar(x=res.index.astype(str), y=res[col],
                                  name=col, marker_color=color))
