@@ -130,12 +130,20 @@ def _jc(d_ini, d_fin, ups=None):
 @st.cache_data(ttl=1800, show_spinner=False)
 def _run(sql: str, d_ini: dt.date, d_fin: dt.date, ups: tuple):
     """Ejecuta una query parametrizada. DataFrame vacío si falla (tabla
-    ausente, columna distinta…), para degradar sin romper."""
+    ausente, columna distinta…), para degradar sin romper.
+
+    ZONA HORARIA: los TIMESTAMP de BQ llegan tz-aware en UTC. El eje del
+    análisis es el día CET (QH 1..96 del I90), así que se convierten a
+    Europe/Madrid ANTES de quitar la tz. Sin esta conversión todo aparece
+    desplazado 4 QH en invierno / 8 QH en verano."""
     try:
         df = _client().query(sql, job_config=_jc(d_ini, d_fin, ups)) \
             .to_dataframe()
         if "ts" in df.columns:
-            df["ts"] = pd.to_datetime(df["ts"]).dt.tz_localize(None)
+            s = pd.to_datetime(df["ts"])
+            if getattr(s.dt, "tz", None) is not None:
+                s = s.dt.tz_convert("Europe/Madrid").dt.tz_localize(None)
+            df["ts"] = s
         return df
     except Exception:
         return pd.DataFrame()
