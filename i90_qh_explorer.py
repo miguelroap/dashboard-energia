@@ -210,6 +210,32 @@ def q_offer_blocks(table, field, d_ini, d_fin, ups):
     return _run(sql, d_ini, d_fin, tuple(ups))
 
 
+# ── Comparativa: series POR UP (sin agregar) ─────────────────────────────────
+def q_program_cmp(table, d_ini, d_fin, ups):
+    sql = f"""
+        SELECT DELIVERY_DATE AS ts, PROGRAMMING_UNIT AS up,
+               SUM(VALUE_MWH) AS v
+        FROM {_tbl(table)}
+        WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
+          AND PROGRAMMING_UNIT IN UNNEST(@ups) AND VALUE_MWH IS NOT NULL
+        GROUP BY ts, up ORDER BY ts"""
+    return _run(sql, d_ini, d_fin, tuple(ups))
+
+
+def q_act_cmp(kind, grp, d_ini, d_fin, ups):
+    cond = ("UPPER(REDISPATCH) LIKE 'UP%'" if grp == "RT1"
+            else "UPPER(REDISPATCH) = 'ECO'")
+    sql = f"""
+        SELECT DELIVERY_DATE AS ts, PROGRAMMING_UNIT AS up,
+               SUM(VALUE_MWH) AS v
+        FROM {_tbl(ACT_TABLES[kind])}
+        WHERE DELIVERY_DATE_DAY_CET BETWEEN @d_ini AND @d_fin
+          AND PROGRAMMING_UNIT IN UNNEST(@ups)
+          AND VALUE_MWH IS NOT NULL AND {cond}
+        GROUP BY ts, up ORDER BY ts"""
+    return _run(sql, d_ini, d_fin, tuple(ups))
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_up_master():
     sql = f"""
@@ -437,9 +463,10 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
     no_data = _t("No data for this panel in the period.",
                  "Sin datos para este panel en el periodo.")
 
-    tab_prog, tab_pdbf, tab_tr, tab_mfrr, tab_res = st.tabs([
+    tab_prog, tab_pdbf, tab_tr, tab_mfrr, tab_cmp, tab_res = st.tabs([
         _t("Programs", "Programas"), "RRTT PDBF",
         _t("RRTT Real Time", "RRTT Tiempo Real"), "mFRR",
+        _t("UP comparison", "Comparativa UP"),
         _t("Period summary", "Resumen periodo")])
 
     # ── 1 · PROGRAMAS ────────────────────────────────────────────────────────
@@ -548,7 +575,101 @@ def render_i90_qh(start_date=None, end_date=None, default_ups=None):
                                "mFRR · Precio oferta por bloque (DIA15)")),
                   no_data)
 
-    # ── 5 · RESUMEN PERIODO ──────────────────────────────────────────────────
+    # ── 5 · COMPARATIVA UP ───────────────────────────────────────────────────
+    with tab_cmp:
+        MET_CMP = {
+            "P48":              ("prog", RESULT_TABLES["p48"]),
+            "PDBF":             ("prog", RESULT_TABLES["pdbf"]),
+            "PHFC":             ("prog", RESULT_TABLES["phfc"]),
+            "RRTT RT1 (DIA03)": ("act", "pdbf", "RT1"),
+            "RRTT F2 (DIA03)":  ("act", "pdbf", "F2"),
+            "TR RT1 (DIA08)":   ("act", "tr", "RT1"),
+            "TR F2 (DIA08)":    ("act", "tr", "F2"),
+            "mFRR (DIA07)":     ("prog", MFRR_E_TABLE),
+        }
+        cc1, cc2 = st.columns([2, 2])
+        with cc1:
+            met_sel = st.selectbox(_t("Metric", "Métrica"),
+                                   options=list(MET_CMP.keys()),
+                                   key="qh_cmp_met")
+        with cc2:
+            norm = st.radio(
+                _t("Scale", "Escala"),
+                options=[_t("Absolute (MWh/QH)", "Absoluto (MWh/QH)"),
+                         _t("Normalized (÷ installed MW)",
+                            "Normalizado (÷ MW instalados)")],
+                key="qh_cmp_norm", horizontal=True)
+        es_norm = norm != _t("Absolute (MWh/QH)", "Absoluto (MWh/QH)")
+
+        spec = MET_CMP[met_sel]
+        if spec[0] == "prog":
+            df_cmp = q_program_cmp(spec[1], d_ini, d_fin, ups)
+        else:
+            df_cmp = q_act_cmp(spec[1], spec[2], d_ini, d_fin, ups)
+
+        mw_map = {}
+        if not master.empty:
+            mw_map = master.set_index("UP")["Power_MW"].to_dict()
+
+        if df_cmp.empty:
+            st.info(no_data)
+        else:
+            sin_mw = []
+            fig = go.Figure()
+            for i, u in enumerate(ups):
+                sub = df_cmp[df_cmp["up"] == u][["ts", "v"]]
+                if sub.empty:
+                    continue
+                x, y = _on_grid(sub)
+                if es_norm:
+                    mw = mw_map.get(u)
+                    if not mw or pd.isna(mw) or mw <= 0:
+                        sin_mw.append(u)
+                        continue
+                    y = y / mw
+                fig.add_trace(go.Scatter(
+                    x=x, y=y, name=u, connectgaps=False,
+                    line=dict(width=1.6, color=C_BLOCKS[i % len(C_BLOCKS)])))
+            fig.update_layout(**_lay(
+                _t("MWh/QH per MW", "MWh/QH por MW") if es_norm
+                else "MWh/QH", height=430))
+            st.plotly_chart(fig, use_container_width=True)
+            if sin_mw:
+                st.caption(_t(
+                    f"Excluded (no installed MW in UP master): "
+                    f"{', '.join(sin_mw)}",
+                    f"Excluidas (sin MW instalados en el maestro): "
+                    f"{', '.join(sin_mw)}"))
+
+            # Totales del periodo por UP
+            tot = (df_cmp.groupby("up")["v"].sum()
+                   .reindex(list(ups)).dropna())
+            if es_norm:
+                tot = pd.Series(
+                    {u: t_ / mw_map[u] for u, t_ in tot.items()
+                     if mw_map.get(u) and not pd.isna(mw_map[u])
+                     and mw_map[u] > 0}, dtype=float)
+            if not tot.empty:
+                figb = go.Figure(go.Bar(
+                    x=tot.index, y=tot.values,
+                    marker_color=[C_BLOCKS[list(ups).index(u) % len(C_BLOCKS)]
+                                  for u in tot.index],
+                    text=[f"{v:,.1f}" for v in tot.values],
+                    textposition="outside"))
+                figb.update_layout(**_lay(
+                    _t("MWh per MW (period)", "MWh por MW (periodo)")
+                    if es_norm else _t("MWh (period)", "MWh (periodo)"),
+                    height=300,
+                    title=_t(f"Period total by UP — {met_sel}",
+                             f"Total del periodo por UP — {met_sel}")))
+                st.plotly_chart(figb, use_container_width=True)
+            st.caption(_t(
+                "Normalized = each UP divided by its installed MW from the "
+                "UP master — comparable utilization across sizes.",
+                "Normalizado = cada UP dividida por sus MW instalados del "
+                "maestro — utilización comparable entre tamaños."))
+
+    # ── 6 · RESUMEN PERIODO ──────────────────────────────────────────────────
     with tab_res:
         def _daily(df, grp=None):
             d = df if grp is None else df[df["grp"] == grp]
