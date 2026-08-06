@@ -8,6 +8,7 @@ from plotly.subplots import make_subplots
 import glob
 import gc
 import os
+import re
 from gcs_loader import (
     gcs_available, load_parquet, load_excel,
     list_files, find_latest_excel, list_parquet_years
@@ -2456,13 +2457,18 @@ elif seleccion_menu == name_supply:
     gc.collect()
 
 # ==============================================================================
-# SECCIÓN 8: MRA PORTFOLIO
+# SECCIÓN 8: MRA PORTFOLIO  ·  100% parquets de GCS (sin ningún Excel)
+# ------------------------------------------------------------------------------
+# Fuente única: ups_dashboard_YYYY-MM.parquet (maestro completo del mes que
+# publica up_mensual.py). El snapshot es el mes elegido y la evolución se
+# reconstruye mes a mes con la MISMA álgebra que tenía el antiguo
+# Evolution_of_MRA_portfolio.xlsx (grupos Biomass+Cogen, CCGT+Coal, ...).
 # ==============================================================================
 elif seleccion_menu == name_portfolio:
-    section_header("🗂️", t("MRA Portfolio – Current MW by Technology",
-                             "Portfolio MRA – MW Actuales por Tecnología"))
+    section_header("🗂️", t("MRA Portfolio – MW by Technology",
+                             "Portfolio MRA – MW por Tecnología"))
     try:
-        # ── TECHS EXCLUIDAS ───────────────────────────────────────────────────
+        # ── TECHS EXCLUIDAS (no son generación) ───────────────────────────────
         EXCLUDED_TECHS = {
             'Supply', 'Consumo de Servicios Auxiliares', 'Consumos directos en mercado',
             'Unidad instrumental internacional', 'Importacion Francia', 'Porfolio',
@@ -2471,289 +2477,272 @@ elif seleccion_menu == name_portfolio:
             'Enlace Baleares', 'Genericas',
         }
 
-        # ── FUNCIONES DE CARGA ────────────────────────────────────────────────
-        @st.cache_data
-        def load_mra_snapshot(path_or_bytes, label=""):
-            """Lee el export de UPs activas (snapshot mensual de REE/OMIE)."""
-            xl = pd.ExcelFile(path_or_bytes)
-            sheet = ('export_unidades-de-programacion'
-                     if 'export_unidades-de-programacion' in xl.sheet_names
-                     else xl.sheet_names[0])
-            raw = pd.read_excel(path_or_bytes, sheet_name=sheet, header=None)
-            # Detectar fila de cabecera: la que contenga 'UP'
-            header_row = 0
-            for i, row in raw.iterrows():
-                if 'UP' in row.values:
-                    header_row = i
-                    break
-            df = pd.read_excel(path_or_bytes, sheet_name=sheet, header=header_row)
+        # ── AGRUPACIÓN DEL HISTÓRICO ──────────────────────────────────────────
+        # Idéntica a la que usaba up_mensual.py para escribir el Evolution.
+        EVO_GROUPS = {
+            'Biomass + Cogen': ['Biomass', 'Cogeneration'],
+            'CCGT + Coal':     ['CCGT', 'Coal'],
+            'Hydro':           ['Hydro'],
+            'Hydro Pump':      ['Hydro Pump-Turb'],
+            'Solar Thermal':   ['Solar Thermal'],
+            'Solar PV':        ['Solar PV'],
+            'Wind':            ['Wind'],
+            'Others':          ['Energia residual', 'Fuel', 'Other renewables'],
+        }
+        EVO_COLS = list(EVO_GROUPS.keys()) + ['TOTAL']
+
+        # Columnas mínimas para que un parquet mensual sirva como maestro.
+        # Los ups_dashboard_*.parquet antiguos solo traían [UP, RZ, FechaInicio_RZ]
+        # y se descartan silenciosamente (regenerables con
+        #   python up_mensual.py --backfill-parquets --gcs).
+        MASTER_MIN_COLS = {'UP', 'Power MW', 'Tech', 'Sujeto del Mercado'}
+
+        # ── DESCUBRIMIENTO Y CARGA ────────────────────────────────────────────
+        @st.cache_data(ttl=3600)
+        def list_portfolio_months():
+            """Meses con ups_dashboard_YYYY-MM.parquet (GCS o disco)."""
+            names = []
+            if _USE_GCS:
+                try:
+                    names = [str(f) for f in list_files('ups_dashboard_')]
+                except Exception:
+                    names = []
+            if not names:
+                names = glob.glob('ups_dashboard_*.parquet')
+            out = set()
+            for n in names:
+                m = re.search(r'ups_dashboard_(\d{4})-(\d{2})\.parquet', str(n))
+                if m:
+                    out.add(f"{m.group(1)}-{m.group(2)}")
+            return sorted(out)
+
+        @st.cache_data(ttl=3600)
+        def load_portfolio_month(ym):
+            """Maestro mensual normalizado. DF vacío si no existe o es 'legacy'."""
+            fname = f'ups_dashboard_{ym}.parquet'
+            try:
+                if _USE_GCS:
+                    df = load_parquet(fname)
+                elif os.path.exists(fname):
+                    df = pd.read_parquet(fname)
+                else:
+                    return pd.DataFrame()
+            except Exception:
+                return pd.DataFrame()
+            if df is None or df.empty:
+                return pd.DataFrame()
+
+            df = df.copy()
             df.columns = df.columns.astype(str).str.strip()
-            # Renombrar columnas clave
-            # MA = "Sujeto del Mercado" (nombre completo, no el código abreviado)
-            col_map = {
-                'UP':                    'UP',
-                'Power MW':              'Power MW',
-                'Tech':                  'Tech',
-                'Sujeto del Mercado':    'MA',       # ← nombre completo
-                'Sujeto del Mercado 2':  'MA_Code',  # código corto (GNRA, etc.)
-                'Technologia':           'Technologia',
-                'Buy-Sell':              'Buy_Sell',
-                'Descrip Long':          'Descrip Long',
-                'Regulation Zone':       'Regulation Zone',
-                'RZ':                    'RZ',
-            }
-            df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
-            df['Power MW'] = pd.to_numeric(df.get('Power MW', 0), errors='coerce').fillna(0)
-            # Asegurar columnas mínimas
-            for col in ['MA','MA_Code','Tech','Buy_Sell']:
+            if not MASTER_MIN_COLS.issubset(set(df.columns)):
+                return pd.DataFrame()
+
+            df = df.rename(columns={
+                'Sujeto del Mercado':   'MA',        # nombre canónico (AXPO, GNERA…)
+                'Sujeto del Mercado 2': 'MA_Code',   # código corto (GNRA01…)
+                'Buy-Sell':             'Buy_Sell',
+            })
+            for col in ['UP', 'MA', 'MA_Code', 'Tech', 'Buy_Sell', 'Technologia',
+                        'Descrip Long', 'Regulation Zone', 'RZ', 'Tipo de UP']:
                 if col not in df.columns:
                     df[col] = ''
-            df['MA']      = df['MA'].astype(str).str.strip()
-            df['MA_Code'] = df['MA_Code'].astype(str).str.strip()
-            df['Tech']    = df['Tech'].astype(str).str.strip()
+                df[col] = df[col].fillna('').astype(str).str.strip()
+            df['Power MW'] = pd.to_numeric(df['Power MW'], errors='coerce').fillna(0.0)
+            df['Month'] = ym
             return df
 
-        @st.cache_data
-        def load_evolution(path_or_bytes):
-            """Lee el fichero histórico de portfolio por MA y fecha."""
-            df = pd.read_excel(path_or_bytes, sheet_name='Sheet1', header=1)
-            df.columns = df.columns.astype(str).str.strip()
-            df['Day']   = pd.to_numeric(df.get('Day',   1), errors='coerce').fillna(1).astype(int)
-            df['Month'] = pd.to_numeric(df.get('Month', 1), errors='coerce').fillna(1).astype(int)
-            df['Year']  = pd.to_numeric(df.get('Year',  2024), errors='coerce').fillna(2024).astype(int)
-            df['Date']  = pd.to_datetime(dict(year=df['Year'], month=df['Month'], day=df['Day']),
-                                         errors='coerce')
-            tech_cols = [c for c in ['Biomass + Cogen','CCGT + Coal','Hydro','Hydro Pump',
-                                     'Solar Thermal','Solar PV','Wind','Others','TOTAL']
-                         if c in df.columns]
-            for c in tech_cols:
-                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-            df['MRA'] = df['MRA'].astype(str).str.strip()
-            return df[['Date','MRA'] + tech_cols].dropna(subset=['Date','MRA'])
+        @st.cache_data(ttl=3600)
+        def valid_portfolio_months(months):
+            """De los meses detectados, los que traen el maestro completo."""
+            return [m for m in months if not load_portfolio_month(m).empty]
 
-        @st.cache_data
-        def find_local_snapshot():
-            """Busca el fichero ANALISIS MRAexport... más reciente en GCS o en disco."""
-            if _USE_GCS:
-                matches = sorted(
-                    [f for f in list_files('ANALISIS MRAexport_unidades-de-programacion')
-                     if f.endswith('.xlsx')],
-                    reverse=True
-                )
-                return matches[0] if matches else None
-            else:
-                candidates = sorted(
-                    glob.glob('ANALISIS MRAexport_unidades-de-programacion*.xlsx'),
-                    reverse=True
-                )
-                return candidates[0] if candidates else None
+        def filter_generation(df, only_venta=True):
+            """Filtra a generación real: fuera techs no productivas y MW<=0."""
+            if df.empty:
+                return df
+            out = df[
+                (~df['Tech'].isin(EXCLUDED_TECHS)) &
+                (~df['Tech'].str.upper().isin({'NAN', '#N/A', '', 'NONE'}))
+            ].copy()
+            if only_venta:
+                out = out[out['Buy_Sell'].str.upper() == 'VENTA']
+            out = out[out['Power MW'] > 0]
+            out = out[~out['MA'].str.upper().isin({'NAN', '', 'NONE'})]
+            return out
 
-        # ── PANEL DE CARGA ────────────────────────────────────────────────────
-        with st.expander(t("📁 File sources (click to change)",
-                           "📁 Fuentes de ficheros (clic para cambiar)"), expanded=False):
-            st.markdown(f"""
-            <div style="color:#46556B;font-size:0.84rem;margin-bottom:0.8rem;">
-            {t('Both files are loaded automatically from GCS if configured, or from the repo otherwise. '
-               'Upload here only if you want to override.',
-               'Ambos ficheros se cargan automáticamente desde GCS si está configurado, o del repo en caso contrario. '
-               'Sube aquí solo si quieres usar una versión diferente.')}
-            </div>""", unsafe_allow_html=True)
-            col_u1, col_u2 = st.columns(2)
-            with col_u1:
-                st.caption(t("Monthly snapshot (ANALISIS MRAexport…)",
-                             "Snapshot mensual (ANALISIS MRAexport…)"))
-                uploaded_snap = st.file_uploader(
-                    t("Override snapshot","Reemplazar snapshot"),
-                    type=['xlsx'], key='portfolio_snap_upload', label_visibility='collapsed')
-            with col_u2:
-                st.caption(t("Portfolio evolution (Evolution_of_MRA_portfolio.xlsx)",
-                             "Evolución portfolio (Evolution_of_MRA_portfolio.xlsx)"))
-                uploaded_evo = st.file_uploader(
-                    t("Override evolution file","Reemplazar fichero evolución"),
-                    type=['xlsx'], key='portfolio_evo_upload', label_visibility='collapsed')
+        @st.cache_data(ttl=3600)
+        def build_evolution(months, only_venta):
+            """Reconstruye la evolución del portfolio por MA y mes."""
+            techs_needed = sorted({x for cols in EVO_GROUPS.values() for x in cols})
+            frames = []
+            for ym in months:
+                g = filter_generation(load_portfolio_month(ym), only_venta=only_venta)
+                if g.empty:
+                    continue
+                pv = g.pivot_table(index='MA', columns='Tech', values='Power MW',
+                                   aggfunc='sum', fill_value=0.0)
+                for c in techs_needed:
+                    if c not in pv.columns:
+                        pv[c] = 0.0
+                blk = pd.DataFrame({name: pv[cols].sum(axis=1)
+                                    for name, cols in EVO_GROUPS.items()})
+                blk['TOTAL'] = blk.sum(axis=1)
+                blk = blk.reset_index().rename(columns={'MA': 'MRA'})
+                blk['Date'] = pd.Period(ym, freq='M').to_timestamp()
+                frames.append(blk)
+            if not frames:
+                return pd.DataFrame(columns=['Date', 'MRA'] + EVO_COLS)
+            out = pd.concat(frames, ignore_index=True)
+            return out[['Date', 'MRA'] + EVO_COLS].sort_values(['Date', 'MRA'])
 
         # ── RESOLUCIÓN DE FUENTES ─────────────────────────────────────────────
-        # Snapshot
-        df_snap = pd.DataFrame()
-        snapshot_label = ""
-        if uploaded_snap is not None:
-            df_snap = load_mra_snapshot(uploaded_snap, label=uploaded_snap.name)
-            snapshot_label = uploaded_snap.name
+        months_all = list_portfolio_months()
+        months_ok  = valid_portfolio_months(tuple(months_all))
+
+        if not months_ok:
+            st.error(t(
+                "⚠️ No monthly master parquets found (ups_dashboard_YYYY-MM.parquet "
+                "with the full 13-column master).",
+                "⚠️ No hay parquets mensuales de maestro (ups_dashboard_YYYY-MM.parquet "
+                "con las 13 columnas completas)."))
+            st.markdown(t(
+                "Generate them with `python up_mensual.py \"<export>.xls\" --gcs`, "
+                "or rebuild the whole history with "
+                "`python up_mensual.py --backfill-parquets --gcs`.",
+                "Genéralos con `python up_mensual.py \"<export>.xls\" --gcs`, "
+                "o reconstruye todo el histórico con "
+                "`python up_mensual.py --backfill-parquets --gcs`."))
         else:
-            snap_name = find_local_snapshot()
-            if snap_name:
-                if _USE_GCS:
-                    raw_bytes = load_excel(snap_name, sheet_name=None)  # cargar como bytes via GCS
-                    # Necesitamos BytesIO — usamos gcsfs directamente
-                    import io as _io
-                    from gcs_loader import _get_fs, _path
-                    _fs = _get_fs()
-                    with _fs.open(_path(snap_name), "rb") as _f:
-                        _buf = _io.BytesIO(_f.read())
-                    df_snap = load_mra_snapshot(_buf, label=snap_name)
-                else:
-                    df_snap = load_mra_snapshot(snap_name, label=snap_name)
-                snapshot_label = snap_name
+            # ── BARRA DE CONTROL ──────────────────────────────────────────────
+            cc1, cc2, cc3 = st.columns([1.1, 1.1, 2])
+            with cc1:
+                sel_month = st.selectbox(
+                    t("Snapshot month:", "Mes del snapshot:"),
+                    options=months_ok[::-1], index=0, key='portfolio_month')
+            with cc2:
+                only_venta = st.checkbox(
+                    t("Sell-side only (generation)", "Solo 'Venta' (generación)"),
+                    value=True, key='portfolio_only_venta',
+                    help=t("The old Evolution_of_MRA_portfolio.xlsx did NOT apply this "
+                           "filter; uncheck to reproduce its exact figures.",
+                           "El antiguo Evolution_of_MRA_portfolio.xlsx NO aplicaba este "
+                           "filtro; desmárcalo para reproducir sus cifras exactas."))
+            with cc3:
+                n_legacy = len(months_all) - len(months_ok)
+                msg = t(f"{len(months_ok)} months available "
+                        f"({months_ok[0]} → {months_ok[-1]})",
+                        f"{len(months_ok)} meses disponibles "
+                        f"({months_ok[0]} → {months_ok[-1]})")
+                if n_legacy:
+                    msg += t(f" · {n_legacy} legacy parquet(s) ignored",
+                             f" · {n_legacy} parquet(s) antiguos ignorados")
+                st.caption("📦 " + msg)
 
-        # Evolution
-        df_evo = pd.DataFrame()
-        evo_label = ""
-        evo_filename = 'Evolution_of_MRA_portfolio.xlsx'
+            df_snap = load_portfolio_month(sel_month)
+            df_evo  = build_evolution(tuple(months_ok), only_venta)
 
-        def _process_evo(df_raw):
-            """Normaliza el DataFrame de evolución independientemente del origen."""
-            if df_raw.empty: return df_raw
-            df_raw.columns = df_raw.columns.astype(str).str.strip()
-            for _col, _def in [('Day',1),('Month',1),('Year',2024)]:
-                df_raw[_col] = pd.to_numeric(df_raw.get(_col, _def), errors='coerce').fillna(_def).astype(int)
-            df_raw['Date'] = pd.to_datetime(
-                dict(year=df_raw['Year'], month=df_raw['Month'], day=df_raw['Day']), errors='coerce')
-            _tc = [c for c in ['Biomass + Cogen','CCGT + Coal','Hydro','Hydro Pump',
-                                'Solar Thermal','Solar PV','Wind','Others','TOTAL']
-                   if c in df_raw.columns]
-            for _c in _tc: df_raw[_c] = pd.to_numeric(df_raw[_c], errors='coerce').fillna(0)
-            df_raw['MRA'] = df_raw['MRA'].astype(str).str.strip()
-            return df_raw[['Date','MRA'] + _tc].dropna(subset=['Date','MRA'])
+            # ── TABS ──────────────────────────────────────────────────────────
+            tab_snap, tab_evo, tab_detail = st.tabs([
+                t("📸 Current Snapshot", "📸 Snapshot Actual"),
+                t("📈 Portfolio Evolution", "📈 Evolución del Portfolio"),
+                t("🔍 MA Detail", "🔍 Detalle por MA"),
+            ])
 
-        if uploaded_evo is not None:
-            df_evo = _process_evo(pd.read_excel(uploaded_evo, sheet_name='Sheet1', header=1))
-            evo_label = uploaded_evo.name
-        elif _USE_GCS:
-            _raw_evo = load_excel(evo_filename, sheet_name='Sheet1', header=1)
-            df_evo = _process_evo(_raw_evo)
-            evo_label = evo_filename
-        elif os.path.exists(evo_filename):
-            df_evo = _process_evo(pd.read_excel(evo_filename, sheet_name='Sheet1', header=1))
-            evo_label = evo_filename
+            # ── CONSTANTES ────────────────────────────────────────────────────
+            RENEWABLES = ['Solar PV', 'Wind', 'Hydro', 'Biomass', 'Other renewables',
+                          'Solar Thermal', 'Hydro Pump-Turb', 'Hydro Pump-Pump']
+            TECH_COLORS = {
+                'Solar PV':         '#f59e0b',
+                'Wind':             '#34d399',
+                'Hydro':            '#38bdf8',
+                'Biomass':          '#84cc16',
+                'CCGT':             '#6366f1',
+                'Coal':             '#78716c',
+                'Cogeneration':     '#fb923c',
+                'Natural gas':      '#a78bfa',
+                'Other renewables': '#10b981',
+                'Solar Thermal':    '#fde68a',
+                'Nuclear':          '#f87171',
+                'Hydro Pump-Turb':  '#7dd3fc',
+                'Storage':          '#c084fc',
+                'Fuel':             '#C2660E',
+            }
+            INCUMBENTS = {'IBERDROLA', 'ENDESA', 'NATURGY', 'EDP'}
 
-        # ── STATUS BAR ────────────────────────────────────────────────────────
-        sc1, sc2 = st.columns(2)
-        with sc1:
-            if not df_snap.empty:
-                st.success(f"✅ Snapshot: **{snapshot_label}** — {len(df_snap):,} UPs")
-            else:
-                st.warning(t("⚠️ No snapshot loaded. Add ANALISIS_MRAexport_unidades-de-programacion*.xlsx to the repo.",
-                             "⚠️ Sin snapshot. Añade ANALISIS_MRAexport_unidades-de-programacion*.xlsx al repositorio."))
-        with sc2:
-            if not df_evo.empty:
-                st.success(f"✅ Evolution: **{evo_label}** — {df_evo['MRA'].nunique()} MAs")
-            else:
-                st.warning(t("⚠️ Evolution_of_MRA_portfolio.xlsx not found in repo.",
-                             "⚠️ Evolution_of_MRA_portfolio.xlsx no encontrado en el repositorio."))
+            # ────────────────────────────────────────────────────────────────
+            # TAB 1: SNAPSHOT DEL MES SELECCIONADO
+            # ────────────────────────────────────────────────────────────────
+            with tab_snap:
+                st.caption(f"📂 ups_dashboard_{sel_month}.parquet — {len(df_snap):,} UPs")
 
-        if df_snap.empty and df_evo.empty:
-            st.stop()
+                df_gen = filter_generation(df_snap, only_venta=only_venta)
 
-        # ── TABS ──────────────────────────────────────────────────────────────
-        tab_snap, tab_evo, tab_detail = st.tabs([
-            t("📸 Current Snapshot","📸 Snapshot Actual"),
-            t("📈 Portfolio Evolution","📈 Evolución del Portfolio"),
-            t("🔍 MA Detail","🔍 Detalle por MA"),
-        ])
-
-        # ── CONSTANTES ────────────────────────────────────────────────────────
-        RENEWABLES = ['Solar PV','Wind','Hydro','Biomass','Other renewables','Solar Thermal',
-                      'Hydro Pump-Turb','Hydro Pump-Pump']
-        TECH_COLORS = {
-            'Solar PV':         '#f59e0b',
-            'Wind':             '#34d399',
-            'Hydro':            '#38bdf8',
-            'Biomass':          '#84cc16',
-            'CCGT':             '#6366f1',
-            'Coal':             '#78716c',
-            'Cogeneration':     '#fb923c',
-            'Natural gas':      '#a78bfa',
-            'Other renewables': '#10b981',
-            'Solar Thermal':    '#fde68a',
-            'Nuclear':          '#f87171',
-            'Hydro Pump-Turb':  '#7dd3fc',
-            'Storage':          '#c084fc',
-            'Fuel':             '#C2660E',
-        }
-
-        # ────────────────────────────────────────────────────────────────────
-        # TAB 1: SNAPSHOT ACTUAL
-        # ────────────────────────────────────────────────────────────────────
-        with tab_snap:
-            if df_snap.empty:
-                st.info(t("No snapshot loaded.","No hay snapshot cargado."))
-            else:
-                if snapshot_label:
-                    st.caption(f"📂 {snapshot_label}")
-
-                # Filtrar generación: excluir techs no deseadas y filas de compra
-                df_gen = df_snap[
-                    (~df_snap['Tech'].isin(EXCLUDED_TECHS)) &
-                    (~df_snap['Tech'].str.upper().isin({'NAN','#N/A',''})) &
-                    (df_snap['Buy_Sell'] == 'Venta')
-                ].copy()
-                df_gen['Power MW'] = pd.to_numeric(df_gen['Power MW'], errors='coerce').fillna(0)
-                df_gen = df_gen[df_gen['Power MW'] > 0]
-
-                # Agrupar por MA y tecnología
-                ma_tech = df_gen.groupby(['MA','Tech'], observed=True)['Power MW'].sum().reset_index()
+                ma_tech  = df_gen.groupby(['MA', 'Tech'], observed=True)['Power MW'].sum().reset_index()
                 ma_total = ma_tech.groupby('MA', observed=True)['Power MW'].sum().reset_index()
-                ma_total.columns = ['MA','Total MW']
+                ma_total.columns = ['MA', 'Total MW']
                 ma_total = ma_total.sort_values('Total MW', ascending=False)
 
-                # Filtros de visualización
                 col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
                 with col_f1:
-                    top_n = st.slider(t("Top N MAs","Top N representantes"), 5, 40, 15)
+                    top_n = st.slider(t("Top N MAs", "Top N representantes"), 5, 40, 15)
                 with col_f2:
                     hide_incumbents = st.checkbox(
                         t("Exclude incumbents (Iberdrola, Endesa, Naturgy, EDP)",
                           "Excluir incumbentes (Iberdrola, Endesa, Naturgy, EDP)"),
-                        value=True
-                    )
-
-                INCUMBENTS = {'IBERDROLA','ENDESA','NATURGY','EDP'}
+                        value=True)
 
                 if hide_incumbents:
-                    # Filtrar cualquier MA cuyo nombre contenga alguno de estos strings
                     mask_inc = ma_total['MA'].str.upper().apply(
-                        lambda x: any(inc in x for inc in INCUMBENTS)
-                    )
+                        lambda x: any(inc in x for inc in INCUMBENTS))
                     ma_total_filt = ma_total[~mask_inc]
                     df_gen_filt = df_gen[~df_gen['MA'].str.upper().apply(
-                        lambda x: any(inc in x for inc in INCUMBENTS)
-                    )]
+                        lambda x: any(inc in x for inc in INCUMBENTS))]
                 else:
                     ma_total_filt = ma_total
                     df_gen_filt = df_gen
 
-                # Top N ordenados de mayor a menor
-                top_mas = ma_total_filt.head(top_n)['MA'].tolist()  # ya ordenado desc
-                ma_tech_filt = df_gen_filt.groupby(['MA','Tech'], observed=True)['Power MW'].sum().reset_index()
+                top_mas = ma_total_filt.head(top_n)['MA'].tolist()
+                ma_tech_filt = df_gen_filt.groupby(['MA', 'Tech'], observed=True)['Power MW'].sum().reset_index()
                 df_plot = ma_tech_filt[ma_tech_filt['MA'].isin(top_mas)].copy()
-                # Orden categórico de mayor a menor total
                 df_plot['MA'] = pd.Categorical(df_plot['MA'], categories=top_mas, ordered=True)
                 df_plot = df_plot.sort_values('MA')
 
-                # KPI cards (sobre datos filtrados)
+                # KPI cards — con delta contra el mes anterior disponible
                 total_mw_market = ma_total_filt['Total MW'].sum()
-                top1 = ma_total_filt.iloc[0] if not ma_total_filt.empty else pd.Series({'MA':'—','Total MW':0})
+                top1 = ma_total_filt.iloc[0] if not ma_total_filt.empty else pd.Series({'MA': '—', 'Total MW': 0})
                 renewables_total = df_gen_filt[df_gen_filt['Tech'].isin(RENEWABLES)]['Power MW'].sum()
-                k1,k2,k3,k4 = st.columns(4)
+
+                delta_txt = None
+                idx_sel = months_ok.index(sel_month)
+                if idx_sel > 0:
+                    prev_gen = filter_generation(load_portfolio_month(months_ok[idx_sel - 1]),
+                                                 only_venta=only_venta)
+                    if hide_incumbents and not prev_gen.empty:
+                        prev_gen = prev_gen[~prev_gen['MA'].str.upper().apply(
+                            lambda x: any(inc in x for inc in INCUMBENTS))]
+                    if not prev_gen.empty:
+                        d_mw = total_mw_market - prev_gen['Power MW'].sum()
+                        delta_txt = f"{d_mw:+,.0f} MW vs {months_ok[idx_sel - 1]}"
+
+                k1, k2, k3, k4 = st.columns(4)
                 with k1: st.markdown(metric_card(
-                    t("Total Market (gen)","Total Mercado (gen)"),
-                    f"{total_mw_market/1000:,.1f}", unit=" GW"), unsafe_allow_html=True)
+                    t("Total Market (gen)", "Total Mercado (gen)"),
+                    f"{total_mw_market/1000:,.1f}", unit=" GW",
+                    delta=delta_txt), unsafe_allow_html=True)
                 with k2: st.markdown(metric_card(
-                    t("Largest Portfolio","Mayor Portfolio"),
+                    t("Largest Portfolio", "Mayor Portfolio"),
                     top1['MA'], delta=f"{top1['Total MW']:,.0f} MW"), unsafe_allow_html=True)
                 with k3: st.markdown(metric_card(
-                    t("Total Renewables","Total Renovables"),
+                    t("Total Renewables", "Total Renovables"),
                     f"{renewables_total/1000:,.1f}", unit=" GW"), unsafe_allow_html=True)
                 with k4: st.markdown(metric_card(
-                    t("Active MAs","MAs activos"),
+                    t("Active MAs", "MAs activos"),
                     f"{len(ma_total_filt):,}"), unsafe_allow_html=True)
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # Stacked bar: MW por tecnología para cada MA, ordenado de mayor a menor
+                # Stacked bar
                 section_header("📊", t("Portfolio by MA (MW by Technology)",
                                         "Portfolio por Representante (MW por Tecnología)"))
-
-                # Ordenar techs por total desc para que la leyenda sea coherente
                 tech_totals = df_plot.groupby('Tech', observed=True)['Power MW'].sum().sort_values(ascending=False)
                 all_techs_in_data = tech_totals.index.tolist()
 
@@ -2773,285 +2762,330 @@ elif seleccion_menu == name_portfolio:
                     height=480,
                     legend=dict(orientation='h', yanchor='bottom', y=1.01,
                                 xanchor='right', x=1, font=dict(size=10)),
-                    margin=dict(l=10,r=10,t=60,b=10),
+                    margin=dict(l=10, r=10, t=60, b=10),
                     hovermode='x unified',
                 ))
                 fig_stack.update_xaxes(gridcolor="#E3E8F0", tickangle=-35)
                 fig_stack.update_yaxes(gridcolor="#E3E8F0")
                 st.plotly_chart(fig_stack, use_container_width=True)
 
-                # Treemap: toda la generación, MA > Tech > MW
+                # Treemap
                 st.markdown("---")
                 section_header("🌳", t("Market Treemap (MW)", "Treemap del Mercado (MW)"))
                 df_tree = df_gen_filt[df_gen_filt['MA'].isin(top_mas)].groupby(
-                    ['MA','Tech'], observed=True)['Power MW'].sum().reset_index()
+                    ['MA', 'Tech'], observed=True)['Power MW'].sum().reset_index()
                 df_tree = df_tree[df_tree['Power MW'] > 0]
                 fig_tree = px.treemap(
-                    df_tree, path=[px.Constant(t("Market","Mercado")), 'MA', 'Tech'],
+                    df_tree, path=[px.Constant(t("Market", "Mercado")), 'MA', 'Tech'],
                     values='Power MW',
                     color='Tech',
                     color_discrete_map=TECH_COLORS,
-                    hover_data={'Power MW':':.0f'},
+                    hover_data={'Power MW': ':.0f'},
                 )
                 fig_tree.update_traces(
                     texttemplate="<b>%{label}</b><br>%{value:,.0f} MW",
                     hovertemplate="<b>%{label}</b><br>%{value:,.0f} MW<extra></extra>",
                 )
-                fig_tree.update_layout(**base_layout(height=520, margin=dict(l=5,r=5,t=20,b=5)))
+                fig_tree.update_layout(**base_layout(height=520, margin=dict(l=5, r=5, t=20, b=5)))
                 st.plotly_chart(fig_tree, use_container_width=True)
 
-                # Tabla resumen: MA × tecnología (pivot)
+                # Tabla resumen
                 st.markdown("---")
-                section_header("📋", t("Summary Table (MW)","Tabla Resumen (MW)"))
+                section_header("📋", t("Summary Table (MW)", "Tabla Resumen (MW)"))
                 pivot = ma_tech_filt[ma_tech_filt['MA'].isin(top_mas)].pivot_table(
                     index='MA', columns='Tech', values='Power MW',
                     aggfunc='sum', fill_value=0).round(1)
                 pivot['TOTAL'] = pivot.sum(axis=1)
                 pivot = pivot.sort_values('TOTAL', ascending=False)
-                # Ordenar columnas: tech por total descendente, TOTAL al final
                 tech_order = pivot.drop(columns='TOTAL').sum().sort_values(ascending=False).index.tolist()
                 pivot = pivot[tech_order + ['TOTAL']]
                 st.dataframe(
                     pivot.style
                     .format("{:,.0f}")
                     .background_gradient(subset=['TOTAL'], cmap='Blues')
-                    .background_gradient(subset=[c for c in ['Solar PV','Wind'] if c in pivot.columns], cmap='Greens'),
+                    .background_gradient(subset=[c for c in ['Solar PV', 'Wind'] if c in pivot.columns], cmap='Greens'),
                     use_container_width=True
                 )
 
-        # ────────────────────────────────────────────────────────────────────
-        # TAB 2: EVOLUCIÓN HISTÓRICA
-        # ────────────────────────────────────────────────────────────────────
-        with tab_evo:
-            if df_evo.empty:
-                st.info(t("Evolution file not found (Evolution_of_MRA_portfolio.xlsx).",
-                          "Fichero de evolución no encontrado (Evolution_of_MRA_portfolio.xlsx)."))
-            else:
-                evo_mas = sorted(df_evo['MRA'].dropna().unique().tolist())
-                evo_tech_cols = [c for c in ['Solar PV','Wind','Hydro','CCGT + Coal',
-                                              'Biomass + Cogen','Hydro Pump','Solar Thermal',
-                                              'Others','TOTAL']
-                                 if c in df_evo.columns]
+            # ────────────────────────────────────────────────────────────────
+            # TAB 2: EVOLUCIÓN HISTÓRICA (reconstruida desde los parquets)
+            # ────────────────────────────────────────────────────────────────
+            with tab_evo:
+                if df_evo.empty:
+                    st.info(t("Not enough monthly parquets to build an evolution.",
+                              "No hay parquets mensuales suficientes para construir la evolución."))
+                else:
+                    st.caption(t(
+                        f"Rebuilt from {df_evo['Date'].nunique()} monthly parquets "
+                        f"· same grouping as the old Evolution workbook",
+                        f"Reconstruida desde {df_evo['Date'].nunique()} parquets mensuales "
+                        f"· misma agrupación que el antiguo Evolution"))
 
-                col_ev1, col_ev2 = st.columns([2,1])
-                with col_ev1:
-                    sel_evo_mas = st.multiselect(
-                        t("Select MAs:","Selecciona Representantes:"),
-                        options=evo_mas,
-                        default=evo_mas[:8],
-                        key='evo_mas_sel'
-                    )
-                with col_ev2:
-                    sel_evo_tech = st.selectbox(
-                        t("Technology / Metric:","Tecnología / Métrica:"),
-                        options=evo_tech_cols,
-                        index=evo_tech_cols.index('TOTAL') if 'TOTAL' in evo_tech_cols else 0,
-                        key='evo_tech_sel'
-                    )
-
-                if sel_evo_mas:
-                    df_evo_plot = df_evo[df_evo['MRA'].isin(sel_evo_mas)].sort_values('Date')
-
-                    # Line chart evolución MW
-                    section_header("📈", t(f"Portfolio Evolution – {sel_evo_tech} (MW)",
-                                            f"Evolución Portfolio – {sel_evo_tech} (MW)"))
-                    fig_evo_line = px.line(
-                        df_evo_plot, x='Date', y=sel_evo_tech, color='MRA',
-                        markers=True,
-                        color_discrete_sequence=px.colors.qualitative.Set2,
-                        labels={sel_evo_tech: 'MW', 'Date': '', 'MRA': 'MA'},
-                    )
-                    fig_evo_line.update_traces(line=dict(width=2.5), marker=dict(size=6))
-                    fig_evo_line.update_layout(**base_layout(
-                        yaxis_title="MW",
-                        height=430,
-                        hovermode='x unified',
-                        legend=dict(orientation='h', yanchor='bottom', y=1.01,
-                                    xanchor='right', x=1, font=dict(size=10)),
-                        margin=dict(l=10,r=10,t=60,b=10),
-                    ))
-                    fig_evo_line.update_xaxes(gridcolor="#E3E8F0")
-                    fig_evo_line.update_yaxes(gridcolor="#E3E8F0")
-                    st.plotly_chart(fig_evo_line, use_container_width=True)
-
-                    # Heatmap: MA × fecha para la tech seleccionada
-                    st.markdown("---")
-                    section_header("🌡️", t("Heatmap – MW over time","Heatmap – MW a lo largo del tiempo"))
-                    df_hm_evo = df_evo_plot.pivot_table(
-                        index='MRA', columns='Date', values=sel_evo_tech, aggfunc='mean')
-                    df_hm_evo.columns = [d.strftime('%b %Y') for d in df_hm_evo.columns]
-
-                    z_evo = df_hm_evo.values
-                    fig_hm_evo = go.Figure(go.Heatmap(
-                        z=z_evo,
-                        x=df_hm_evo.columns.tolist(),
-                        y=df_hm_evo.index.tolist(),
-                        colorscale=[[0,'#dbeafe'],[0.5,'#3b82f6'],[1,'#1e3a8a']],
-                        hovertemplate="<b>%{y}</b> · %{x}<br>%{z:,.0f} MW<extra></extra>",
-                        colorbar=dict(title=dict(text="MW", font=dict(color="#46556B", size=11)),
-                                      tickfont=dict(color="#46556B"), thickness=12, outlinewidth=0),
-                    ))
-                    fig_hm_evo.update_layout(
-                        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                        font=dict(family="Inter", color="#46556B"),
-                        title_font=dict(family="Inter", color="#13233B", size=13),
-                        margin=dict(l=10,r=60,t=20,b=40),
-                        height=max(280, len(sel_evo_mas)*48 + 80),
-                        xaxis=dict(tickangle=-35, tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)"),
-                        yaxis=dict(tickfont=dict(size=11), gridcolor="rgba(0,0,0,0)"),
-                    )
-                    st.plotly_chart(fig_hm_evo, use_container_width=True)
-
-                    # Tabla última fecha disponible
-                    st.markdown("---")
-                    section_header("📋", t("Last snapshot in evolution file","Último snapshot en fichero de evolución"))
+                    # Ordenar MAs por tamaño en el último mes
                     last_date = df_evo['Date'].max()
-                    df_last = df_evo[df_evo['Date'] == last_date][['MRA'] + evo_tech_cols].set_index('MRA')
-                    st.caption(f"📅 {last_date.strftime('%d %b %Y')}")
-                    st.dataframe(
-                        df_last.style.format("{:,.0f}")
-                        .background_gradient(subset=['TOTAL'] if 'TOTAL' in df_last.columns else [], cmap='Blues'),
-                        use_container_width=True
-                    )
+                    rank_last = (df_evo[df_evo['Date'] == last_date]
+                                 .sort_values('TOTAL', ascending=False)['MRA'].tolist())
+                    evo_mas = rank_last + sorted(set(df_evo['MRA']) - set(rank_last))
+                    evo_tech_cols = [c for c in ['Solar PV', 'Wind', 'Hydro', 'CCGT + Coal',
+                                                 'Biomass + Cogen', 'Hydro Pump',
+                                                 'Solar Thermal', 'Others', 'TOTAL']
+                                     if c in df_evo.columns]
 
-        # ────────────────────────────────────────────────────────────────────
-        # TAB 3: DETALLE POR MA
-        # ────────────────────────────────────────────────────────────────────
-        with tab_detail:
-            if df_snap.empty:
-                st.info(t("Load a snapshot to see MA detail.","Carga un snapshot para ver el detalle por MA."))
-            else:
-                all_mas_snap = sorted(df_snap['MA'].dropna().astype(str).unique().tolist())
-                # Default: GNERA or similar full name
-                default_ma = next((m for m in all_mas_snap if 'GNERA' in m.upper() or 'GESTERNOVA' in m.upper()), all_mas_snap[0])
-                sel_ma_detail = st.selectbox(
-                    t("Select Market Agent:","Selecciona Representante:"),
-                    options=all_mas_snap,
-                    index=all_mas_snap.index(default_ma),
-                    key='portfolio_ma_detail'
-                )
+                    col_ev1, col_ev2 = st.columns([2, 1])
+                    with col_ev1:
+                        sel_evo_mas = st.multiselect(
+                            t("Select MAs:", "Selecciona Representantes:"),
+                            options=evo_mas,
+                            default=[m for m in evo_mas
+                                     if not any(inc in m.upper() for inc in INCUMBENTS)][:8],
+                            key='evo_mas_sel')
+                    with col_ev2:
+                        sel_evo_tech = st.selectbox(
+                            t("Technology / Metric:", "Tecnología / Métrica:"),
+                            options=evo_tech_cols,
+                            index=evo_tech_cols.index('TOTAL') if 'TOTAL' in evo_tech_cols else 0,
+                            key='evo_tech_sel')
 
-                df_ma = df_snap[df_snap['MA'].astype(str) == sel_ma_detail].copy()
-                df_ma_gen = df_ma[
-                    (df_ma['Buy_Sell'] == 'Venta') &
-                    (~df_ma['Tech'].isin(EXCLUDED_TECHS)) &
-                    (~df_ma['Tech'].str.upper().isin({'NAN','#N/A',''}))
-                ].copy()
-                df_ma_gen['Power MW'] = pd.to_numeric(df_ma_gen['Power MW'], errors='coerce').fillna(0)
-                df_ma_gen = df_ma_gen[df_ma_gen['Power MW'] > 0]
+                    if sel_evo_mas:
+                        df_evo_plot = df_evo[df_evo['MRA'].isin(sel_evo_mas)].sort_values('Date')
 
-                total_mw_ma = df_ma_gen['Power MW'].sum()
-                n_ups = len(df_ma_gen)
-                tech_breakdown = df_ma_gen.groupby('Tech', observed=True)['Power MW'].sum().sort_values(ascending=False)
+                        section_header("📈", t(f"Portfolio Evolution – {sel_evo_tech} (MW)",
+                                                f"Evolución Portfolio – {sel_evo_tech} (MW)"))
+                        fig_evo_line = px.line(
+                            df_evo_plot, x='Date', y=sel_evo_tech, color='MRA',
+                            markers=True,
+                            color_discrete_sequence=px.colors.qualitative.Set2,
+                            labels={sel_evo_tech: 'MW', 'Date': '', 'MRA': 'MA'},
+                        )
+                        fig_evo_line.update_traces(line=dict(width=2.5), marker=dict(size=6))
+                        fig_evo_line.update_layout(**base_layout(
+                            yaxis_title="MW",
+                            height=430,
+                            hovermode='x unified',
+                            legend=dict(orientation='h', yanchor='bottom', y=1.01,
+                                        xanchor='right', x=1, font=dict(size=10)),
+                            margin=dict(l=10, r=10, t=60, b=10),
+                        ))
+                        fig_evo_line.update_xaxes(gridcolor="#E3E8F0")
+                        fig_evo_line.update_yaxes(gridcolor="#E3E8F0")
+                        st.plotly_chart(fig_evo_line, use_container_width=True)
 
-                # KPIs
-                k1, k2, k3 = st.columns(3)
-                with k1: st.markdown(metric_card(
-                    t("Total Portfolio (gen)","Portfolio Total (gen)"),
-                    f"{total_mw_ma:,.0f}", unit=" MW"), unsafe_allow_html=True)
-                with k2: st.markdown(metric_card(
-                    t("Active UPs","UPs Activas"), f"{n_ups:,}"), unsafe_allow_html=True)
-                dom_tech = tech_breakdown.index[0] if not tech_breakdown.empty else '—'
-                dom_mw   = tech_breakdown.iloc[0]  if not tech_breakdown.empty else 0
-                with k3: st.markdown(metric_card(
-                    t("Dominant Technology","Tecnología Dominante"),
-                    dom_tech, delta=f"{dom_mw:,.0f} MW"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
+                        # Heatmap
+                        st.markdown("---")
+                        section_header("🌡️", t("Heatmap – MW over time", "Heatmap – MW a lo largo del tiempo"))
+                        df_hm_evo = df_evo_plot.pivot_table(
+                            index='MRA', columns='Date', values=sel_evo_tech, aggfunc='mean')
+                        df_hm_evo.columns = [d.strftime('%b %Y') for d in df_hm_evo.columns]
 
-                col_d1, col_d2 = st.columns([1, 1.6])
+                        fig_hm_evo = go.Figure(go.Heatmap(
+                            z=df_hm_evo.values,
+                            x=df_hm_evo.columns.tolist(),
+                            y=df_hm_evo.index.tolist(),
+                            colorscale=[[0, '#dbeafe'], [0.5, '#3b82f6'], [1, '#1e3a8a']],
+                            hovertemplate="<b>%{y}</b> · %{x}<br>%{z:,.0f} MW<extra></extra>",
+                            colorbar=dict(title=dict(text="MW", font=dict(color="#46556B", size=11)),
+                                          tickfont=dict(color="#46556B"), thickness=12, outlinewidth=0),
+                        ))
+                        fig_hm_evo.update_layout(
+                            paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                            font=dict(family="Inter", color="#46556B"),
+                            title_font=dict(family="Inter", color="#13233B", size=13),
+                            margin=dict(l=10, r=60, t=20, b=40),
+                            height=max(280, len(sel_evo_mas) * 48 + 80),
+                            xaxis=dict(tickangle=-35, tickfont=dict(size=10), gridcolor="rgba(0,0,0,0)"),
+                            yaxis=dict(tickfont=dict(size=11), gridcolor="rgba(0,0,0,0)"),
+                        )
+                        st.plotly_chart(fig_hm_evo, use_container_width=True)
 
-                # Donut tecnología
-                with col_d1:
-                    section_header("🥧", t("MW by Technology","MW por Tecnología"))
-                    tech_pie = tech_breakdown[tech_breakdown > 0].reset_index()
-                    fig_pie = go.Figure(go.Pie(
-                        labels=tech_pie['Tech'],
-                        values=tech_pie['Power MW'],
-                        hole=0.4,
-                        textinfo='label+percent',
-                        textfont=dict(size=11),
-                        marker=dict(
-                            colors=[TECH_COLORS.get(tc,'#8B99AE') for tc in tech_pie['Tech']],
-                            line=dict(color='white', width=2)),
-                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} MW (%{percent})<extra></extra>",
-                    ))
-                    fig_pie.update_layout(**base_layout(
-                        height=360, showlegend=False,
-                        margin=dict(l=10,r=10,t=20,b=10),
-                        annotations=[dict(text=f"<b>{total_mw_ma:,.0f}</b><br>MW",
-                                          x=0.5, y=0.5, font_size=14, showarrow=False,
-                                          font=dict(color="#13233B"))]
-                    ))
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-                # Lista de UPs con barras
-                with col_d2:
-                    section_header("⚙️", t("UPs Detail","Detalle de UPs"))
-                    df_ma_gen_disp = df_ma_gen[['UP','Power MW','Tech','Technologia']].copy()
-                    df_ma_gen_disp = df_ma_gen_disp[df_ma_gen_disp['Power MW'] > 0].sort_values('Power MW', ascending=False)
-                    fig_ups = px.bar(
-                        df_ma_gen_disp.head(30), x='Power MW', y='UP',
-                        orientation='h',
-                        color='Tech',
-                        color_discrete_map=TECH_COLORS,
-                        labels={'Power MW':'MW', 'UP':'', 'Tech':'Tech'},
-                        hover_data={'Power MW':':.1f', 'Tech':True, 'Technologia':True},
-                    )
-                    fig_ups.update_layout(**base_layout(
-                        height=max(360, len(df_ma_gen_disp.head(30))*28 + 80),
-                        xaxis_title="MW", yaxis_title="",
-                        showlegend=True,
-                        legend=dict(orientation='h', yanchor='bottom', y=1.01,
-                                    xanchor='right', x=1, font=dict(size=9)),
-                        margin=dict(l=10,r=10,t=50,b=10),
-                    ))
-                    fig_ups.update_xaxes(gridcolor="#E3E8F0")
-                    fig_ups.update_yaxes(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=9))
-                    st.plotly_chart(fig_ups, use_container_width=True)
-
-                # Tabla completa de UPs del MA seleccionado
-                st.markdown("---")
-                section_header("📋", t("Full UP List","Lista Completa de UPs"))
-                cols_show = [c for c in ['UP','Descrip Long','Power MW','Tech','Technologia',
-                                          'Regulation Zone','RZ'] if c in df_ma_gen.columns]
-                st.dataframe(
-                    df_ma_gen[cols_show].sort_values('Power MW', ascending=False)
-                    .reset_index(drop=True)
-                    .style.format({'Power MW':'{:,.1f} MW'})
-                    .background_gradient(subset=['Power MW'], cmap='Blues'),
-                    use_container_width=True, height=400
-                )
-
-                # Comparativa con evolución (si existe)
-                # Buscar el código corto (MA_Code) del MA seleccionado para cruzar con evolución
-                ma_code_match = df_snap.loc[df_snap['MA'] == sel_ma_detail, 'MA_Code'].dropna()
-                evo_ma_key = ma_code_match.iloc[0] if not ma_code_match.empty else sel_ma_detail
-                evo_match = df_evo[df_evo['MRA'].str.upper() == evo_ma_key.upper()]
-                if not df_evo.empty and not evo_match.empty:
+                    # Bloque del último mes + export para el Evolution manual
                     st.markdown("---")
-                    section_header("📈", t("Historical Evolution of this MA",
-                                            "Evolución Histórica de este Representante"))
-                    df_evo_ma = evo_match.sort_values('Date')
-                    evo_plot_cols = [c for c in ['Solar PV','Wind','Hydro','CCGT + Coal',
-                                                  'Biomass + Cogen','TOTAL'] if c in df_evo_ma.columns]
-                    df_evo_ma_melt = df_evo_ma[['Date'] + evo_plot_cols].melt(
-                        id_vars='Date', var_name='Tech', value_name='MW')
-                    df_evo_ma_melt = df_evo_ma_melt[df_evo_ma_melt['Tech'] != 'TOTAL']
-
-                    fig_evo_ma = px.area(
-                        df_evo_ma_melt, x='Date', y='MW', color='Tech',
-                        color_discrete_sequence=px.colors.qualitative.Set2,
-                        labels={'MW':'MW', 'Date':'', 'Tech':''},
+                    section_header("📋", t("Latest month block", "Bloque del último mes"))
+                    df_last = (df_evo[df_evo['Date'] == last_date][['MRA'] + EVO_COLS]
+                               .set_index('MRA').sort_values('TOTAL', ascending=False))
+                    st.caption(f"📅 {last_date.strftime('%b %Y')}")
+                    st.dataframe(
+                        df_last.style.format("{:,.1f}")
+                        .background_gradient(subset=['TOTAL'], cmap='Blues'),
+                        use_container_width=True, height=380
                     )
-                    fig_evo_ma.update_layout(**base_layout(
-                        height=380, hovermode='x unified',
-                        legend=dict(orientation='h', yanchor='bottom', y=1.01,
-                                    xanchor='right', x=1, font=dict(size=10)),
-                        margin=dict(l=10,r=10,t=60,b=10),
-                    ))
-                    fig_evo_ma.update_xaxes(gridcolor="#E3E8F0")
-                    fig_evo_ma.update_yaxes(gridcolor="#E3E8F0", title_text="MW")
-                    st.plotly_chart(fig_evo_ma, use_container_width=True)
+                    exp = df_evo.copy()
+                    exp['Date'] = exp['Date'].dt.strftime('%Y-%m')
+                    st.download_button(
+                        t("⬇️ Download full evolution (CSV)",
+                          "⬇️ Descargar evolución completa (CSV)"),
+                        data=exp.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig'),
+                        file_name=f"evolution_MRA_portfolio_{months_ok[0]}_{months_ok[-1]}.csv",
+                        mime="text/csv",
+                        help=t("Same algebra as the manual Evolution workbook — "
+                               "paste-ready.",
+                               "Misma álgebra que el Evolution manual — listo para pegar."))
+
+            # ────────────────────────────────────────────────────────────────
+            # TAB 3: DETALLE POR MA
+            # ────────────────────────────────────────────────────────────────
+            with tab_detail:
+                all_mas_snap = sorted(filter_generation(df_snap, only_venta=False)['MA'].unique().tolist())
+                if not all_mas_snap:
+                    st.info(t("No MAs in this snapshot.", "No hay representantes en este snapshot."))
+                else:
+                    default_ma = next((m for m in all_mas_snap
+                                       if 'GNERA' in m.upper() or 'GESTERNOVA' in m.upper()),
+                                      all_mas_snap[0])
+                    sel_ma_detail = st.selectbox(
+                        t("Select Market Agent:", "Selecciona Representante:"),
+                        options=all_mas_snap,
+                        index=all_mas_snap.index(default_ma),
+                        key='portfolio_ma_detail')
+
+                    df_ma_gen = filter_generation(
+                        df_snap[df_snap['MA'] == sel_ma_detail], only_venta=only_venta)
+
+                    total_mw_ma = df_ma_gen['Power MW'].sum()
+                    n_ups = len(df_ma_gen)
+                    tech_breakdown = df_ma_gen.groupby('Tech', observed=True)['Power MW'].sum().sort_values(ascending=False)
+
+                    k1, k2, k3 = st.columns(3)
+                    with k1: st.markdown(metric_card(
+                        t("Total Portfolio (gen)", "Portfolio Total (gen)"),
+                        f"{total_mw_ma:,.0f}", unit=" MW"), unsafe_allow_html=True)
+                    with k2: st.markdown(metric_card(
+                        t("Active UPs", "UPs Activas"), f"{n_ups:,}"), unsafe_allow_html=True)
+                    dom_tech = tech_breakdown.index[0] if not tech_breakdown.empty else '—'
+                    dom_mw   = tech_breakdown.iloc[0]  if not tech_breakdown.empty else 0
+                    with k3: st.markdown(metric_card(
+                        t("Dominant Technology", "Tecnología Dominante"),
+                        dom_tech, delta=f"{dom_mw:,.0f} MW"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    col_d1, col_d2 = st.columns([1, 1.6])
+
+                    with col_d1:
+                        section_header("🥧", t("MW by Technology", "MW por Tecnología"))
+                        tech_pie = tech_breakdown[tech_breakdown > 0].reset_index()
+                        fig_pie = go.Figure(go.Pie(
+                            labels=tech_pie['Tech'],
+                            values=tech_pie['Power MW'],
+                            hole=0.4,
+                            textinfo='label+percent',
+                            textfont=dict(size=11),
+                            marker=dict(
+                                colors=[TECH_COLORS.get(tc, '#8B99AE') for tc in tech_pie['Tech']],
+                                line=dict(color='white', width=2)),
+                            hovertemplate="<b>%{label}</b><br>%{value:,.0f} MW (%{percent})<extra></extra>",
+                        ))
+                        fig_pie.update_layout(**base_layout(
+                            height=360, showlegend=False,
+                            margin=dict(l=10, r=10, t=20, b=10),
+                            annotations=[dict(text=f"<b>{total_mw_ma:,.0f}</b><br>MW",
+                                              x=0.5, y=0.5, font_size=14, showarrow=False,
+                                              font=dict(color="#13233B"))]
+                        ))
+                        st.plotly_chart(fig_pie, use_container_width=True)
+
+                    with col_d2:
+                        section_header("⚙️", t("UPs Detail", "Detalle de UPs"))
+                        df_ma_gen_disp = df_ma_gen[['UP', 'Power MW', 'Tech', 'Technologia']].copy()
+                        df_ma_gen_disp = df_ma_gen_disp.sort_values('Power MW', ascending=False)
+                        fig_ups = px.bar(
+                            df_ma_gen_disp.head(30), x='Power MW', y='UP',
+                            orientation='h',
+                            color='Tech',
+                            color_discrete_map=TECH_COLORS,
+                            labels={'Power MW': 'MW', 'UP': '', 'Tech': 'Tech'},
+                            hover_data={'Power MW': ':.1f', 'Tech': True, 'Technologia': True},
+                        )
+                        fig_ups.update_layout(**base_layout(
+                            height=max(360, len(df_ma_gen_disp.head(30)) * 28 + 80),
+                            xaxis_title="MW", yaxis_title="",
+                            showlegend=True,
+                            legend=dict(orientation='h', yanchor='bottom', y=1.01,
+                                        xanchor='right', x=1, font=dict(size=9)),
+                            margin=dict(l=10, r=10, t=50, b=10),
+                        ))
+                        fig_ups.update_xaxes(gridcolor="#E3E8F0")
+                        fig_ups.update_yaxes(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=9))
+                        st.plotly_chart(fig_ups, use_container_width=True)
+
+                    # Tabla completa de UPs
+                    st.markdown("---")
+                    section_header("📋", t("Full UP List", "Lista Completa de UPs"))
+                    cols_show = [c for c in ['UP', 'Descrip Long', 'Power MW', 'Tech',
+                                             'Technologia', 'Regulation Zone', 'RZ']
+                                 if c in df_ma_gen.columns]
+                    st.dataframe(
+                        df_ma_gen[cols_show].sort_values('Power MW', ascending=False)
+                        .reset_index(drop=True)
+                        .style.format({'Power MW': '{:,.1f} MW'})
+                        .background_gradient(subset=['Power MW'], cmap='Blues'),
+                        use_container_width=True, height=400
+                    )
+
+                    # Altas y bajas de UPs contra el mes anterior
+                    idx_sel = months_ok.index(sel_month)
+                    if idx_sel > 0:
+                        prev_ym = months_ok[idx_sel - 1]
+                        prev_ma = filter_generation(
+                            load_portfolio_month(prev_ym).pipe(
+                                lambda d: d[d['MA'] == sel_ma_detail] if not d.empty else d),
+                            only_venta=only_venta)
+                        if not prev_ma.empty:
+                            set_now, set_prev = set(df_ma_gen['UP']), set(prev_ma['UP'])
+                            altas, bajas = sorted(set_now - set_prev), sorted(set_prev - set_now)
+                            if altas or bajas:
+                                st.markdown("---")
+                                section_header("🔄", t(f"Changes vs {prev_ym}",
+                                                        f"Altas y bajas vs {prev_ym}"))
+                                ch1, ch2 = st.columns(2)
+                                with ch1:
+                                    st.markdown(f"**🟢 {t('New', 'Altas')} ({len(altas)})**")
+                                    if altas:
+                                        st.dataframe(
+                                            df_ma_gen[df_ma_gen['UP'].isin(altas)][
+                                                ['UP', 'Power MW', 'Tech']]
+                                            .sort_values('Power MW', ascending=False)
+                                            .reset_index(drop=True),
+                                            use_container_width=True, height=220)
+                                    else:
+                                        st.caption("—")
+                                with ch2:
+                                    st.markdown(f"**🔴 {t('Dropped', 'Bajas')} ({len(bajas)})**")
+                                    if bajas:
+                                        st.dataframe(
+                                            prev_ma[prev_ma['UP'].isin(bajas)][
+                                                ['UP', 'Power MW', 'Tech']]
+                                            .sort_values('Power MW', ascending=False)
+                                            .reset_index(drop=True),
+                                            use_container_width=True, height=220)
+                                    else:
+                                        st.caption("—")
+
+                    # Evolución histórica de este MA (mismo campo 'Sujeto del Mercado'
+                    # en snapshot y en evolución → el cruce es exacto)
+                    evo_match = df_evo[df_evo['MRA'] == sel_ma_detail]
+                    if not evo_match.empty:
+                        st.markdown("---")
+                        section_header("📈", t("Historical Evolution of this MA",
+                                                "Evolución Histórica de este Representante"))
+                        df_evo_ma = evo_match.sort_values('Date')
+                        evo_plot_cols = [c for c in list(EVO_GROUPS.keys())
+                                         if c in df_evo_ma.columns]
+                        df_evo_ma_melt = df_evo_ma[['Date'] + evo_plot_cols].melt(
+                            id_vars='Date', var_name='Tech', value_name='MW')
+
+                        fig_evo_ma = px.area(
+                            df_evo_ma_melt, x='Date', y='MW', color='Tech',
+                            color_discrete_sequence=px.colors.qualitative.Set2,
+                            labels={'MW': 'MW', 'Date': '', 'Tech': ''},
+                        )
+                        fig_evo_ma.update_layout(**base_layout(
+                            height=380, hovermode='x unified',
+                            legend=dict(orientation='h', yanchor='bottom', y=1.01,
+                                        xanchor='right', x=1, font=dict(size=10)),
+                            margin=dict(l=10, r=10, t=60, b=10),
+                        ))
+                        fig_evo_ma.update_xaxes(gridcolor="#E3E8F0")
+                        fig_evo_ma.update_yaxes(gridcolor="#E3E8F0", title_text="MW")
+                        st.plotly_chart(fig_evo_ma, use_container_width=True)
 
     except Exception as e:
         import traceback
