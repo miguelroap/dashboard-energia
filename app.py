@@ -76,9 +76,29 @@ st.markdown("""
         background: rgba(255,255,255,0.07);
     }
     [data-testid="stSidebar"] input,
-    [data-testid="stSidebar"] [data-baseweb="input"] {
+    [data-testid="stSidebar"] [data-baseweb="input"],
+    [data-testid="stSidebar"] [data-baseweb="base-input"],
+    [data-testid="stSidebar"] [data-baseweb="input"] input,
+    [data-testid="stSidebar"] [data-baseweb="datepicker"],
+    [data-testid="stSidebar"] [data-baseweb="datepicker"] input,
+    [data-testid="stSidebar"] [data-testid="stDateInput"] * {
         background: var(--tinta-2) !important; color: #E8EEF7 !important;
+        -webkit-text-fill-color: #E8EEF7 !important;
+        caret-color: #E8EEF7 !important;
+        opacity: 1 !important;
         border-color: #2A3E5C !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stDateInput"] svg {
+        fill: #E8EEF7 !important;
+    }
+    /* El calendario emergente se pinta fuera del sidebar (a nivel body),
+       así que necesita su propia regla con fondo claro y texto oscuro */
+    div[data-baseweb="calendar"],
+    div[data-baseweb="popover"] {
+        background: var(--carta) !important;
+    }
+    div[data-baseweb="calendar"] * {
+        color: var(--texto) !important;
     }
     [data-testid="stSidebar"] .stButton>button {
         background: transparent; color: #C9D6E8;
